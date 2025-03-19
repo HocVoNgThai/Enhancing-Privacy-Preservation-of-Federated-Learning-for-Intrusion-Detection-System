@@ -1,0 +1,25 @@
+7: if FN then
+8:   for L in L2 do:
+9:     if is not divide then
+10:       Set the value, Bl for the current L
+11:     for E in L do:
+12:         Perform Eopt on Eint using current Bl
+13:         if adding Eint to Eflt changes Eflt then:
+14:           Eflt= - Eflt
+15:         end if
+16:         Encrypt the original E in the dataset
+17:         Add E and corresponding Bl, Eopt data to Dx or Dy 
+18:     end for
+19:    else if Eopt is divide then
+20:       for E thuộc L do:
+21:         Select Bl such that Bl is a factor of Eint 
+22:         Perform Eopt on Eint using selected Bl
+23:         if Eint and Eopt are not both positive or negative then
+24:             Eflt = - Eflt
+25:         end if
+26:         E = Eint + Eflt 
+27:         Add E and corresponding Bl, Eopt data to Dx or Dy
+28:       end for
+29:    end if
+30:  end for
+31: end if

@@ -1,4 +1,8 @@
-*.h5
-*.db
+# bỏ qua folder
 Dataset/
 Processed_Data/
+
+# Bỏ qua all file *.db, *.h5
+*.db
+*.h5
+
