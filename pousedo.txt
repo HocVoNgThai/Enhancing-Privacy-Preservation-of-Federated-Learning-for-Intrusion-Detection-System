@@ -1,0 +1,82 @@
+HE. HE is a cryptographic method that enables computations to be executed on encrypted data
+without requiring decryption [68]. In other words, it allows operations to be conducted on encrypted
+data, producing an encrypted output that matches the outcome of the same operations on the
+unencrypted data once decrypted. There are two different types of HE schemes: (a) partially HE
+[69], which only works with specific types of computations that can be performed on the encrypted
+data. For example, an encryption scheme may support either addition or multiplication operations
+on encrypted values, but not both, and (b) fully HE [76], which allows for arbitrary computations
+to be performed on encrypted data, including both addition and multiplication operations, while
+preserving the confidentiality of the data. In this article, we introduce a new fully homomorphic
+encryption (FHE) technique. Algorithm 4 provides the HE method incorporated in our approach.
+This algorithm applies a set of flexible encryption techniques based both on information stored
+within the current L list of the dataset, and information about each E element of L.
+The information pre-checks that are performed determine which calculations can be performed
+on the current dataset. The encryption method first determines if any E results in a value of 0
+without the previous layer’s offset encryption. If any E in the current list is 0, the encryption
+method selects Eopt, the operation to perform, from the list (add, subtract, multiply) to prevent
+zero-division errors from occurring. If no element in the list is 0, the encryption method instead
+selects from the list (add, subtract, multiply, divide), since no zero-division errors can occur, given
+this condition and the selection method for Bl.
+
+
+Once the above conditions are decided, the method then proceeds, iteratively, through each E
+of L of L2 and, if the selected Eopt is not division, this function selects a single list-wise Bl value
+for the current L and apply that value and the current operation for each element of the current
+L. If the operation is division, then the value of Bl instead be selected so that Bl is a factor of the current E in the current L of L2. The calculations performed on the dataset at this junction point
+are as follows, given that Eint = (E + Otot), in the current method:
+addition = Eint +Bl (1)
+subtraction = Eint − Bl (2)
+multiplication = [(Eint − Otot) ∗ *Bl] + Otot (3)
+division = (Eint − Otot)/Bl + Otot (4)
+The value Otot is both removed and re-implemented in the same procedural step to prevent any
+encryption loss and allows the encryption to take place so that, in a simpler context, the following
+encryption can take place:
+addition = E + Bl (5)
+subtraction = E − Bl (6)
+multiplication = E * Bl (7)
+division = E/Bl (8)
+The randomly selected operation from above (Equations (1)–(4)) then re-appends the offset, Otot,
+in the same variable value-setting step so that no value loses its integrity through the duration of
+the operation. Once the equation calculation has occurred, the method then checks to ensure that
+Eint and Eflt are both positive or negative, with respect to each other. If Eflt and Eint are not both
+one or the other individually, then the method inverts the sign of Eflt by setting Eflt = Eflt ∗ −1.
+Once this condition has been checked, the method adds Eint + Eflt, sets the current E of the
+current L of L2 to the resultant value, and stores the value of the current E in the internal encryption
+directory, along with an integer representation of the operation that was performed, so that the same
+operational code can be used internally on INVERSE(Eopt) in the decryption algorithm’s process.
+Once Step 3 is completed, i.e., L2 was encrypted with DP, DK exchange, and the HE, the encrypted
+L2 is then sent to the server.
+
+Require: Noise and offset encrypted weights and biases L2
+Ensure: Noise, offset, and homomorphic-encrypted weights and biases L2
+1: Dx ← ∅
+2: Dy ← ∅
+3: Let Eopt be a randomly selected operation (add, subtract, multiply, divide)
+4: Let Op be the integer offset of the previous encryption
+5: Let FN ∈ (true,false)
+6: Let Bl be the pseudo-randomly selected integer used by this method to encrypt the dataset
+7: if FN then
+8: for L in L2 do
+9: if Eopt is not divide then
+10: Set the value, Bl for the current L
+11: for E in L do
+12: Perform Eopt on Eint using current Bl
+13: if adding Eint to Eflt changes Eflt then
+14:     Eflt = -Eflt
+15: end if
+16: Encrypt the original E in the dataset
+17: Add E and corresponding Bl, Eopt data to Dx or Dy
+18: end for
+19: else if Eopt is divide then then
+20: for E ∈ L do
+21: Select Bl such that Bl is a factor of Eint
+22: Perform Eopt on Eint using selected Bl
+23: if Eint and Eflt are not both positive or negative then
+24: Eflt= -Eflt
+25: end if
+26: E = Eint + Eflt
+27: Add E and corresponding Bl, Eopt data to Dx or Dy
+28: end for
+29: end if
+30: end for
+31: end if
