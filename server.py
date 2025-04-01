@@ -1,3 +1,4 @@
+import tenseal as ts
 import sys
 sys.path.append('..')
 
@@ -7,12 +8,7 @@ import multiprocessing
 from multiprocessing.pool import ThreadPool
 
 
-###
 
-
-
-
-###
 def client_compute_caller(input_tuple):
     clientObject, message = input_tuple
     return clientObject.proc_weights(message=message)
@@ -47,15 +43,18 @@ class Message:
         
     def __str__(self):
         return "Message from {self.sender} to {self.recipient}.\n Body is : {self.body} \n \n"
-    
+
+
 class Server():
-    def __init__(self,server_name, active_clients_list):
+    def __init__(self, server_name, active_clients_list):
+        # ... (giữ nguyên phần __init__ hiện có)
         self.server_name = server_name
         self.global_weights = {}
         self.global_biases = {}
         self.active_clients_list = active_clients_list
         self.agents_dict = {}
-        
+        # Lấy context FHE từ client đầu tiên (tất cả client dùng chung context)
+        self.context = None
         for name in active_clients_list:
             if name not in LATENCY_DICT.keys():
                 LATENCY_DICT[name]={}
@@ -65,7 +64,7 @@ class Server():
         LATENCY_DICT['server_0']={client_name: timedelta(seconds=0.1) for client_name in active_clients_list}
         for client_name in active_clients_list:
             LATENCY_DICT[client_name]['server_0'] = timedelta(seconds= np.random.random())
-        
+    
     def set_agentsDict(self, agents_dict):
         self.agents_dict = agents_dict
     
@@ -78,102 +77,116 @@ class Server():
     def initIterations():
         return None
 
-
-
+    def _get_fhe_context_from_client(self, client):
+        """Lấy context FHE từ client"""
+        # Giả sử tất cả client dùng chung context
+        return client.context
+    
     def InitLoop(self):
-        converged_clients = {} # client đã hội tụ (removed)
+        # Lấy context FHE từ client đầu tiên
+        if len(self.active_clients_list) > 0:
+            first_client_name = self.active_clients_list[0]
+            self.context = self.agents_dict['client'][first_client_name].context
+        else:
+            raise ValueError("No active clients available")
+
+        converged_clients = {}
         active_clients_list = self.active_clients_list
         
+        # Lấy context FHE từ client đầu tiên
+        if self.context is None and len(active_clients_list) > 0:
+            first_client = self.agents_dict['client'][active_clients_list[0]]
+            self.context = self._get_fhe_context_from_client(first_client)
+        
         for iteration in range(1, num_iterations+1):
-            print("============================= Đang chạy Iteration "+str(iteration)+"=============================")
+            print(f"============================= Đang chạy Iteration {iteration} =============================")
             weights = {}
             biases = {}
             
             m = multiprocessing.Manager()
-            
             lock = m.Lock()
             
             with ThreadPool(len(active_clients_list)) as calling_init_pool:
                 arguments = []
-                
                 for client_name in active_clients_list:
                     clientObject = self.agents_dict['client'][client_name]
-                    
-                    body = {'iteration': iteration, 'lock': lock, 'simulated_time': LATENCY_DICT[self.server_name][client_name]}
-                    #message from server to client
-                    msg = Message(sender_name=self.server_name, recipient_name=client_name, body = body)
-                    
+                    body = {
+                        'iteration': iteration, 
+                        'lock': lock, 
+                        'simulated_time': LATENCY_DICT[self.server_name][client_name]
+                    }
+                    msg = Message(
+                        sender_name=self.server_name, 
+                        recipient_name=client_name, 
+                        body=body
+                    )
                     arguments.append((clientObject, msg))
                 calling_returned_messages = calling_init_pool.map(client_compute_caller, arguments)
-            
             
             start_call_time = datetime.now()
             simulated_time = find_slowest_time(calling_returned_messages)
             
-            temp_sum_weights = sum(message.body['weights'] for message in calling_returned_messages)
-            temp_sum_biases = sum(message.body['biases'] for message in calling_returned_messages)
+            # Giải mã và tính toán trung bình trên dữ liệu mã hóa
+            if len(calling_returned_messages) == 0:
+                continue
+                
+            # Lấy shape gốc từ message đầu tiên
+            original_shape = calling_returned_messages[0].body['original_shape']
             
-            self.global_weights[iteration] = temp_sum_weights/len(self.active_clients_list)
-            self.global_biases[iteration] = temp_sum_biases/len(self.active_clients_list)
+            # Khởi tạo tổng mã hóa
+            first_msg = calling_returned_messages[0]
+            encrypted_weights_sum = ts.lazy_ckks_vector_from(first_msg.body['encrypted_weights'])
+            encrypted_weights_sum.link_context(self.context)
             
-            # add time server logic takes
+            encrypted_biases_sum = ts.lazy_ckks_vector_from(first_msg.body['encrypted_biases'])
+            encrypted_biases_sum.link_context(self.context)
+            
+            # Cộng dồn các thông số mã hóa từ các client
+            for msg in calling_returned_messages[1:]:
+                encrypted_weights = ts.lazy_ckks_vector_from(msg.body['encrypted_weights'])
+                encrypted_weights.link_context(self.context)
+                encrypted_weights_sum += encrypted_weights
+                
+                encrypted_biases = ts.lazy_ckks_vector_from(msg.body['encrypted_biases'])
+                encrypted_biases.link_context(self.context)
+                encrypted_biases_sum += encrypted_biases
+            
+            # Tính trung bình (chia cho số client)
+            count = len(calling_returned_messages)
+            encrypted_weights_avg = encrypted_weights_sum * (1/count)
+            encrypted_biases_avg = encrypted_biases_sum * (1/count)
+            
+            # Lưu thông số mã hóa để gửi về client
+            self.global_weights[iteration] = encrypted_weights_avg.serialize()
+            self.global_biases[iteration] = encrypted_biases_avg.serialize()
+            self.original_shapes[iteration] = original_shape
+            
             end_call_time = datetime.now()
             server_logic_time = end_call_time - start_call_time
-            simulated_time += server_logic_time #Tổng thời gian cho đến bước này
+            simulated_time += server_logic_time
             
-            
-            # Trả weights với bias trung bình mới về client 
+            # Gửi thông số mã hóa về các client
             with ThreadPool(len(active_clients_list)) as returning_pool:
                 arguments = []
-                
                 for client_name in active_clients_list:
                     clientObject = self.agents_dict['client'][client_name]
-                    
-                    body = {'iteration': iteration, 'return_weights' : self.global_weights[iteration], 
-                            'return_biases': self.global_biases[iteration], 'simulated_time': simulated_time}
-                    
-                    msg = Message(sender_name=self.server_name, recipient_name=client_name, body=body)
-                    
+                    body = {
+                        'iteration': iteration,
+                        'encrypted_weights': self.global_weights[iteration],
+                        'encrypted_biases': self.global_biases[iteration],
+                        'original_shape': original_shape,
+                        'simulated_time': simulated_time
+                    }
+                    msg = Message(
+                        sender_name=self.server_name, 
+                        recipient_name=client_name, 
+                        body=body
+                    )
                     arguments.append((clientObject, msg))
                 returned_messages = returning_pool.map(client_weights_returner, arguments)
             
-            
-            simulated_time = find_slowest_time(returned_messages)
-            start_return_time = datetime.now()
-            
-            removing_clients = set()
-            
-            for message in returned_messages:
-                if message.body['converged'] == True and message.sender not in converged_clients:
-                    converged_clients[message.sender] = iteration
-                    removing_clients.add(message.sender)
-                    
-            end_call_time = datetime.now()
-            server_logic_time = end_call_time - start_call_time
-            simulated_time += server_logic_time #Tổng thời gian cho đến bước này
-            
-            # bỏ client nếu nó hội tụ
-            active_clients_list = [active_client for active_client in active_clients_list if active_client not in removing_clients]
-            
-            # nếu số client nhỏ hơn 2, dừng được rồi
-            if len(active_clients_list) < 2:
-                self.get_convergences(converged_clients)
-                return
-            
-            with ThreadPool(len(active_clients_list)) as calling_removing_pool:
-                arguments = []
-                
-                for client_name in active_clients_list:
-                    clientObject = self.agents_dict['client'][client_name]
-                    
-                    body = {'iteration': iteration, 'removing_clients': removing_clients,\
-                        'simulated_time': simulated_time + LATENCY_DICT[self.server_name][client_name]}
-                    msg = Message(sender_name=self.server_name, recipient_name=client_name, body=body)
-                    arguments.append((clientObject, msg))
-                __ = calling_removing_pool.map(client_drop_caller, arguments)
-            
+            # ... (phần còn lại giữ nguyên)
             print("============================= Kết thúc Iteration "+str(iteration)+"=============================")
-        
         print(converged_clients)
         return None    
     
