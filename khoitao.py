@@ -6,11 +6,11 @@ from tensorflow.keras.utils import Sequence, to_categorical
 from tensorflow.keras.models import Sequential
 from tensorflow.keras import layers, models
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout
-
+import tenseal as ts
 
 input_files = ["file1.csv", "file2.csv", "file3.csv"]
 
-temp_dir = "C:/Users/hoang/FileCSV_DACN_2025/"  # Thư mục lưu file tạm
+temp_dir = ""  # Thư mục lưu file tạm
 
 input_files = [temp_dir + output_file for output_file in input_files]
 print(input_files)
@@ -20,9 +20,6 @@ df = [dk.read_csv(input_file) for input_file in input_files]
 batch_size = 512
 ratio_test_all = 0.15
 
-# from dask_ml.model_selection import train_test_split 
-# # chia train test ratio 0.8:0.2 & random 
-# train_df, test_df = train_test_split(df, test_size=ratio_test_all, random_state=42)
 
 def dask_to_tf_dataset(dask_df, batch_size=128, num_classes=10): 
     def generator():
@@ -49,10 +46,6 @@ def dask_to_tf_dataset(dask_df, batch_size=128, num_classes=10):
     
     return tf.data.Dataset.from_generator(generator, output_signature=output_signature).prefetch(tf.data.AUTOTUNE)
 
-
-# train_df1, test_df1 = df1.random_split([1 - ratio_test_all, ratio_test_all])
-# train_df2, test_df2 = df2.random_split([1 - ratio_test_all, ratio_test_all])
-# train_df3, test_df3 = df3.random_split([1 - ratio_test_all, ratio_test_all])
 train_dfs = []
 test_dfs = []
 for dff in df:
@@ -60,15 +53,7 @@ for dff in df:
     train_dfs.append(train_df)
     test_dfs.append(test_df)
    
-
-# train_gen1 = dask_to_tf_dataset(train_df1, 512, 10).repeat()
-# train_gen2 = dask_to_tf_dataset(train_df2, 512, 10).repeat()
-# train_gen3 = dask_to_tf_dataset(train_df3, 512, 10).repeat()
 train_gens = [dask_to_tf_dataset(train_df, 512, 10).repeat() for train_df in train_dfs]
-
-# test_gen1 = dask_to_tf_dataset(test_df1, 512, 10).repeat()
-# test_gen2 = dask_to_tf_dataset(test_df2, 512, 10).repeat()
-# test_gen3 = dask_to_tf_dataset(test_df3, 512, 10).repeat()
 test_gens = [dask_to_tf_dataset(test_df , 512, 10).repeat() for test_df in test_dfs]
 
 import datetime
@@ -91,12 +76,21 @@ print(active_clients_list)
 agents_dict= {}
 serverObjects={}
 clientObjects={}
+# Tạo context FHE chung trước khi khởi tạo các client
+shared_context = ts.context(
+    ts.SCHEME_TYPE.CKKS,
+    poly_modulus_degree=8192,
+    coeff_mod_bit_sizes=[60, 40, 40, 60]
+)
+shared_context.generate_galois_keys()
+shared_context.global_scale = 2**40
 serverObjects = {server_name: Server(server_name=server_name, \
                         active_clients_list=active_clients_list) \
                         for server_name in active_servers_list}
 
 clientObjects = {client_name: Client(client_name, train_gens[clientID], test_gens[clientID], \
-                        active_clients_list = active_clients_list) \
+                        active_clients_list = active_clients_list, \
+                        fhe_context=shared_context)\
                         for clientID, client_name in enumerate(active_clients_list)}
 
 # lưu dict
