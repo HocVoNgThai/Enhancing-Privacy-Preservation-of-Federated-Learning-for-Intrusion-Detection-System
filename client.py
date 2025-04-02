@@ -6,24 +6,26 @@ import threading
 from warnings import simplefilter
 from datetime import datetime, timedelta
 from sklearn import metrics
-from keras.models import load_model
-from tensorflow.keras.callbacks import CSVLogger
-import tenseal as ts
 
 import numpy as np
+import tenseal as ts
 import tensorflow as tf
+
+######
+from keras.models import load_model
+from tensorflow.keras.callbacks import CSVLogger
 from tensorflow.keras.utils import Sequence, to_categorical
 from tensorflow.keras.models import Sequential
 from tensorflow.keras import layers, models
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout
-
 from tensorflow.keras.models import load_model
 #####
 from dp_mechanisms import laplace
+
 ##### CODE SECTION
 LATENCY_DICT = {}
 
-tolerance_left_edge = 0.5
+tolerance_left_edge = 0.2
 tolerance_right_edge=2.0
 class Message:
     def __init__(self, sender_name, recipient_name, body):
@@ -35,8 +37,7 @@ class Message:
         return "Message from {self.sender} to {self.recipient}.\n Body is : {self.body} \n \n"
 
 class Client():
-    def __init__(self, client_name, data_train, data_test, active_clients_list, fhe_context=None):
-        # ... (giữ nguyên phần __init__ hiện có)
+    def __init__(self, client_name, data_train, data_test, active_clients_list, he_context):
         self.client_name = client_name
         self.active_clients_list = active_clients_list
         self.data_train = data_train
@@ -55,6 +56,7 @@ class Client():
         self.local_biases = {}
         self.local_accuracy = {}
         self.compute_times = {} # proc weight
+        self.he_context = he_context
         
         # dp parameter
         self.alpha = 1.0
@@ -63,8 +65,6 @@ class Client():
         self.len_per_iteration = 50
         self.local_weights_noise ={}
         self.local_biases_noise = {}
-        # Thêm context FHE
-        self.context = fhe_context if fhe_context is not None else self._setup_fhe_context()
         
         for name in active_clients_list:
             if name not in LATENCY_DICT.keys():
@@ -75,11 +75,18 @@ class Client():
         LATENCY_DICT['server_0']={client_name: timedelta(seconds=0.1) for client_name in active_clients_list}
         for client_name in active_clients_list:
             LATENCY_DICT[client_name]['server_0'] = timedelta(seconds= np.random.random())
+            
+    def get_clientID(self):
+        return self.clientID
+    
+    def set_agentsDict(self, agents_dict):
+        self.agents_dict = agents_dict
         
-    def _setup_fhe_context(self):
+##########################################     HE CONTEXT     #################################################
+    def init_he_context(self):
         """Thiết lập context mã hóa đồng hình"""
         context = ts.context(
-            ts.SCHEME_TYPE.CKKS,
+            ts.SCHEME_TYPE.CKKS, # ckks cho số thực, bfv cho int
             poly_modulus_degree=8192,
             coeff_mod_bit_sizes=[60, 40, 40, 60]
         )
@@ -87,41 +94,36 @@ class Client():
         context.global_scale = 2**40
         return context
     
-    def encrypt_parameters(self, weights, biases):
-        """Mã hóa weights và biases"""
+    def he_params_encryption(self, weights, biases):
         # Flatten weights để mã hóa
         weights_flat = weights.flatten()
         
         # Mã hóa
-        encrypted_weights = ts.ckks_vector(self.context, weights_flat)
-        encrypted_biases = ts.ckks_vector(self.context, biases)
+        encrypted_weights = ts.ckks_vector(self.he_context, weights_flat)
+        encrypted_biases = ts.ckks_vector(self.he_context, biases)
         
-        return encrypted_weights, encrypted_biases
+        return encrypted_weights.serialize(), encrypted_biases.serialize()
     
-    def decrypt_parameters(self, encrypted_weights, encrypted_biases, original_shape):
+    def he_params_decryption(self, encrypted_weights, encrypted_biases, weights_original_shape):
         """Giải mã weights và biases"""
         # Giải mã
         decrypted_weights = np.array(encrypted_weights.decrypt())
         decrypted_biases = np.array(encrypted_biases.decrypt())
         
         # Reshape weights về hình dạng ban đầu
-        decrypted_weights = decrypted_weights.reshape(original_shape)
+        decrypted_weights = decrypted_weights.reshape(weights_original_shape)
         
         return decrypted_weights, decrypted_biases
-    def get_clientID(self):
-        return self.clientID
+##########################################     HE CONTEXT     #################################################
+
     
-    def set_agentsDict(self, agents_dict):
-        self.agents_dict = agents_dict
-    
+################################################ ADD NOISE #####################################################
     def add_gamma_noise(self, local_weights, local_biases, iteration):
         weights_shape = local_weights.shape
         weights_dp_noise = np.zeros(weights_shape)
 
         biases_shape = local_biases.shape
         biases_dp_noise = np.zeros(biases_shape)
-        
-        len_per_iteration = 50 # data_train / iteration
         
         sensitivity =  2 / (len(self.active_clients_list)
                           *self.len_per_iteration*self.alpha)
@@ -149,7 +151,10 @@ class Client():
         biases_with_noise += biases_dp_noise
     
         return weights_with_noise, biases_with_noise
+################################################ ADD NOISE #####################################################
 
+
+################################################ MODEL ###################################################
     def model_fit(self, iteration):
         file_path = self.temp_dir +"/Iteration_"+str(iteration)+".csv"
         file_path_model = self.temp_dir+"/model_"+str(iteration)+".h5"
@@ -186,85 +191,113 @@ class Client():
             global_biases = None
         
         csv_logger = CSVLogger(file_path, append=True)
-        if self.client_name=='client_0':
-            steps_per_epoch = 14000
+        if self.client_name =='client_0':
+            steps_per_epoch = 11500
         elif self.client_name =='client_1':
-            steps_per_epoch = 28000
+            steps_per_epoch = 23000
         elif self.client_name == 'client_2':
-            steps_per_epoch = 42000
+            steps_per_epoch = 34500
         
         model.fit(self.data_train, epochs=5, steps_per_epoch=steps_per_epoch, verbose = 1, callbacks=[csv_logger])
         model.save(file_path_model)
         
         weights, biases = model.layers[-1].get_weights()
         return weights, biases
+################################################ MODEL #####################################################
+    
 
+############################################## PRODUCE WEIGHTS #############################################################   
     def proc_weights(self, message):
+        
         start_time = datetime.now()
         body = message.body
         iteration, lock, simulated_time = body['iteration'], body['lock'], body['simulated_time']
 
+        # if iteration - 1 > len(self.train_datasets):  # iteration is indexed starting from 1
+        #     raise (ValueError(
+        #         'Not enough data to support a {}th iteration. Either change iteration data length in config.py or decrease amount of iterations.'.format(
+        #             iteration)))
+        
         weights, biases = self.model_fit(iteration)
+
         self.local_weights[iteration] = weights
         self.local_biases[iteration] = biases
         
         final_weights, final_biases = copy.deepcopy(weights), copy.deepcopy(biases)
         
-        # Thêm noise và mã hóa
-        lock.acquire()
-        final_weights, final_biases = self.add_gamma_noise(
-            local_weights=weights, local_biases=biases, iteration=iteration)
-        
-        # Mã hóa thông số trước khi gửi
-        encrypted_weights, encrypted_biases = self.encrypt_parameters(final_weights, final_biases)
+        # add noise - lock để đảm bảo không xung đột
+        lock.acquire()  # for random seed
+        final_weights, final_biases = self.add_gamma_noise(local_weights=weights, local_biases=biases, iteration=iteration)   
+        final_encrypted_weights, final_encrypted_biases = self.he_params_encryption(final_weights, final_biases)         
         lock.release()
         
+        # print("Weights ", final_weights)
+        # temp_context = self.he_context.serialize(save_secret_key= False)
+        # tmp_context = ts.context_from(temp_context)
+        # temp_enc_w = ts.lazy_ckks_vector_from(final_encrypted_weights)
+        # temp_enc_w.link_context(tmp_context)
+        # temp_enc_w *=2
+        # temp_enc_b = ts.lazy_ckks_vector_from(final_encrypted_biases)
+        # temp_enc_b.link_context(tmp_context)
+        # temp_enc_b *=2
+        
+        # enc_w = temp_enc_w.serialize()
+        # enc_b = temp_enc_b.serialize()
+        
+        # encrypted_weights = ts.lazy_ckks_vector_from(enc_w)
+        # encrypted_weights.link_context(self.he_context)
+        
+        # encrypted_biases = ts.lazy_ckks_vector_from(enc_b)
+        # encrypted_biases.link_context(self.he_context)
+        # weights_original_shape = final_weights.shape
+        # return_weights, return_biases = self.he_params_decryption(
+        #     encrypted_weights, encrypted_biases, weights_original_shape
+        # )
+        # print("Weight tets", return_weights)
+        
+        #end
         end_time = datetime.now()
         compute_time = end_time - start_time
         self.compute_times[iteration] = compute_time
-        
+
         simulated_time += compute_time + LATENCY_DICT[self.client_name]['server_0']
 
-        body = {
-            'encrypted_weights': encrypted_weights.serialize(),
-            'encrypted_biases': encrypted_biases.serialize(),
-            'original_shape': weights.shape,  # Lưu shape gốc để reshape khi giải mã
-            'iter': iteration,
-            'compute_time': compute_time, 
-            'simulated_time': simulated_time
-        }
+        body = {'context' : self.he_context.serialize(save_secret_key=False),
+                'weights_original_shape': final_weights.shape,
+                'encrypted_weights': final_encrypted_weights,
+                'encrypted_biases': final_encrypted_biases,
+                'iter': iteration,
+                'compute_time': compute_time,
+                'simulated_time': simulated_time}  # generate body
 
-        msg = Message(
-            sender_name=self.client_name, 
-            recipient_name=self.agents_dict['server']['server_0'], 
-            body=body
-        )
+        print(self.client_name + "Come end!")
+        msg = Message(sender_name=self.client_name, recipient_name=self.agents_dict['server']['server_0'], body=body)
         return msg
-    
+
+############################################## RECEIVE WEIGHTS #########################################################  
     def recv_weights(self, message):
         body = message.body
-        iteration = body['iteration']
-        simulated_time = body['simulated_time']
+        iteration, simulated_time = body['iteration'], body['simulated_time']
         
         # Giải mã thông số nhận được từ server
         encrypted_weights = ts.lazy_ckks_vector_from(body['encrypted_weights'])
-        encrypted_weights.link_context(self.context)
+        encrypted_weights.link_context(self.he_context)
         
         encrypted_biases = ts.lazy_ckks_vector_from(body['encrypted_biases'])
-        encrypted_biases.link_context(self.context)
+        encrypted_biases.link_context(self.he_context)
         
-        original_shape = body['original_shape']
-        return_weights, return_biases = self.decrypt_parameters(
-            encrypted_weights, encrypted_biases, original_shape
+        weights_original_shape = body['weights_original_shape']
+        return_weights, return_biases = self.he_params_decryption(
+            encrypted_weights, encrypted_biases, weights_original_shape
         )
         
-        # Xử lý noise như trước
-        return_weights -= self.local_weights_noise[iteration] / len(self.active_clients_list)
+        ## remove dp
+        return_weights -= self.local_weights_noise[iteration]/ len(self.active_clients_list)
         return_biases -= self.local_biases_noise[iteration] / len(self.active_clients_list)
         
         self.global_weights[iteration] = return_weights
-        self.global_biases[iteration] = return_biases
-
+        self.global_biases[iteration]  = return_biases
+        
         local_weights = self.local_weights[iteration]
         local_biases = self.local_biases[iteration]
 
@@ -298,30 +331,50 @@ class Client():
                       body={'converged': converged,
                             'simulated_time': simulated_time + LATENCY_DICT[self.client_name]['server_0']})
         return msg
-        
+
+############################################## PREDICT + EVALUATE #########################################################          
     def evaluate_accuracy(self, local_weights, local_biases, iteration):
         file_path_model = self.temp_dir+"/model_"+str(iteration)+".h5"
         model = load_model(file_path_model)
         model.layers[-1].set_weights([local_weights, local_biases])
         
-        loss, accuracy =model.evaluate(self.data_test, steps = 100)
+        if self.client_name=='client_0':
+            steps = 2030
+            # 2030
+        elif self.client_name =='client_1':
+            steps = 4060
+            # 4060
+        elif self.client_name == 'client_2':
+            steps = 6090
+            # 6090
+            
+        loss, accuracy =model.evaluate(self.data_test, steps = steps)
     
         return accuracy
-    
+############################################## PREDICT + EVALUATE #########################################################   
+
+
+############################################## CHECK HỘI TỤ #########################################################       
     def check_convergence(self, local_params, global_params):
         local_weights, local_biases = local_params
         global_weights, global_biases = global_params
 
         weights_differences = np.abs(global_weights - local_weights)
         biases_differences = np.abs(global_biases - local_biases)
-        
-        if (weights_differences < tolerance_left_edge).all() and (biases_differences <tolerance_right_edge).all():
+
+        print("weights dif", weights_differences)
+        print("biases diff", biases_differences)
+        if (weights_differences < tolerance_left_edge).all() and (biases_differences <tolerance_left_edge).all():
             return True
         elif (weights_differences > tolerance_right_edge).all() and (biases_differences > tolerance_right_edge).all():
-           return True     
+            return True     
         
         return False
+############################################## CHECK HỘI TỤ ######################################################### 
 
+
+
+############################################## REMOVE CLIENTS #############################################################
     def remove_active_clients(self, message):
         body = message.body
         removing_clients, simulated_time, iteration \
@@ -331,3 +384,5 @@ class Client():
 
         self.active_clients_list = [active_client for active_client in self.active_clients_list if active_client not in removing_clients]
         return None
+    
+############################################### REMOVE CLIENTS ############################################################
