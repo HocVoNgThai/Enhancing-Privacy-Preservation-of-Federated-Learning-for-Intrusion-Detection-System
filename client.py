@@ -219,7 +219,7 @@ class Client():
         # elif self.client_name == 'client_2':
         #     steps_per_epoch = 345
         
-        model.fit(self.data_train, epochs=5, steps_per_epoch=np.ceil(self.steps_per_epoch/100), callbacks=[csv_logger])
+        model.fit(self.data_train, epochs=5, steps_per_epoch=self.steps_per_epoch, callbacks=[csv_logger])
         model.save(file_path_model)
         
         weights, biases = model.layers[-1].get_weights()
