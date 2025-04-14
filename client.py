@@ -12,6 +12,7 @@ import tenseal as ts
 import tensorflow as tf
 
 ######
+from tensorflow import keras
 from keras.models import load_model
 from tensorflow.keras.callbacks import CSVLogger
 from tensorflow.keras.utils import Sequence, to_categorical
@@ -19,6 +20,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras import layers, models
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout
 from tensorflow.keras.models import load_model
+
 #####
 from dp_mechanisms import laplace
 
@@ -43,7 +45,7 @@ class Client():
         self.data_train = data_train
         self.data_test = data_test
         self.agent_dict = {}
-        self.temp_dir = client_name + "_log/" + datetime.now().strftime("%Hh%Mp__%d-%m-%Y")
+        self.temp_dir = client_name + "_log/" + datetime.now().strftime("%Hh%Mp__%d-%m")
         os.mkdir(self.temp_dir)
         
         ## global
@@ -62,7 +64,7 @@ class Client():
         self.alpha = 1.0
         self.epsilon = 1.0
         self.mean = 0
-        self.len_per_iteration = 50
+        self.steps_per_epoch = 50
         self.local_weights_noise ={}
         self.local_biases_noise = {}
         
@@ -81,7 +83,12 @@ class Client():
     
     def set_agentsDict(self, agents_dict):
         self.agents_dict = agents_dict
+    
+    def set_steps_per_epoch(self, steps_per_epoch=50):
+        self.steps_per_epoch = steps_per_epoch
         
+    def get_steps_per_epoch(self):
+        print(self.steps_per_epoch)
 ##########################################     HE CONTEXT     #################################################
     def init_he_context(self):
         """Thiết lập context mã hóa đồng hình"""
@@ -126,7 +133,7 @@ class Client():
         biases_dp_noise = np.zeros(biases_shape)
         
         sensitivity =  2 / (len(self.active_clients_list)
-                          *self.len_per_iteration*self.alpha)
+                          *self.steps_per_epoch*self.alpha)
         
         for i in range(weights_shape[0]):  # weights_modified is 2-D
             for j in range(weights_shape[1]):
@@ -157,15 +164,27 @@ class Client():
 ################################################ MODEL ###################################################
     def model_fit(self, iteration):
         file_path = self.temp_dir +"/Iteration_"+str(iteration)+".csv"
-        file_path_model = self.temp_dir+"/model_"+str(iteration)+".h5"
+        file_path_model = self.temp_dir+"/model_"+str(iteration)+".keras"
         
         features, labels = next(iter(self.data_train))
         input_shape = (features.shape[1], 1)
-        output_shape = labels.shape[1]
-        print(f"Input Shape: {input_shape}")
+        # output_shape = labels.shape[1]
 
-        from tensorflow import keras
-
+        """====================== Classification ====================="""
+        # model = keras.Sequential([
+        #     layers.Input(shape=input_shape),
+        #     layers.Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"),
+        #     layers.MaxPooling1D(pool_size=4),
+        #     layers.Conv1D(filters=64, kernel_size=3,  padding="same",activation="relu"),
+        #     layers.MaxPooling1D(pool_size=2),
+        #     layers.Flatten(),
+        #     layers.Dense(128, activation='relu'),
+        #     layers.Dropout(0.5),
+        #     layers.BatchNormalization(),
+        #     layers.Dense(output_shape, activation='softmax')
+        # ])
+        
+        # =============  binary =====================
         model = keras.Sequential([
             layers.Input(shape=input_shape),
             layers.Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"),
@@ -176,29 +195,31 @@ class Client():
             layers.Dense(128, activation='relu'),
             layers.Dropout(0.5),
             layers.BatchNormalization(),
-            layers.Dense(output_shape, activation='softmax')
+            layers.Dense(1, activation='sigmoid')  # dùng sigmoid thay cho softmax
         ])
+        
+        ## free
+        del input_shape, features, labels
+        
         csv_logger = CSVLogger(file_path, append=True)
-        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         
         if iteration > 1:
             print(f"{iteration} Come here!")
             global_weights = copy.deepcopy(self.global_weights[iteration - 1])
             global_biases = copy.deepcopy(self.global_biases[iteration - 1])
             model.layers[-1].set_weights([global_weights,  global_biases])
-        else:
-            global_weights = None
-            global_biases = None
+            del global_weights, global_biases
         
         csv_logger = CSVLogger(file_path, append=True)
-        if self.client_name =='client_0':
-            steps_per_epoch = 11500
-        elif self.client_name =='client_1':
-            steps_per_epoch = 23000
-        elif self.client_name == 'client_2':
-            steps_per_epoch = 34500
+        # if self.client_name =='client_0':
+        #     steps_per_epoch = 115
+        # elif self.client_name =='client_1':
+        #     steps_per_epoch = 230
+        # elif self.client_name == 'client_2':
+        #     steps_per_epoch = 345
         
-        model.fit(self.data_train, epochs=5, steps_per_epoch=steps_per_epoch, verbose = 1, callbacks=[csv_logger])
+        model.fit(self.data_train, epochs=5, steps_per_epoch=np.ceil(self.steps_per_epoch/100), callbacks=[csv_logger])
         model.save(file_path_model)
         
         weights, biases = model.layers[-1].get_weights()
@@ -223,15 +244,13 @@ class Client():
         self.local_weights[iteration] = weights
         self.local_biases[iteration] = biases
         
-        final_weights, final_biases = copy.deepcopy(weights), copy.deepcopy(biases)
-        
         # add noise - lock để đảm bảo không xung đột
         lock.acquire()  # for random seed
-        final_weights, final_biases = self.add_gamma_noise(local_weights=weights, local_biases=biases, iteration=iteration)   
-        final_encrypted_weights, final_encrypted_biases = self.he_params_encryption(final_weights, final_biases)         
+        weights, biases = self.add_gamma_noise(local_weights=weights, local_biases=biases, iteration=iteration)   
+        final_encrypted_weights, final_encrypted_biases = self.he_params_encryption(weights, biases)         
         lock.release()
         
-        # print("Weights ", final_weights)
+        # print("Weights ", weights)
         # temp_context = self.he_context.serialize(save_secret_key= False)
         # tmp_context = ts.context_from(temp_context)
         # temp_enc_w = ts.lazy_ckks_vector_from(final_encrypted_weights)
@@ -249,7 +268,7 @@ class Client():
         
         # encrypted_biases = ts.lazy_ckks_vector_from(enc_b)
         # encrypted_biases.link_context(self.he_context)
-        # weights_original_shape = final_weights.shape
+        # weights_original_shape = weights.shape
         # return_weights, return_biases = self.he_params_decryption(
         #     encrypted_weights, encrypted_biases, weights_original_shape
         # )
@@ -263,7 +282,7 @@ class Client():
         simulated_time += compute_time + LATENCY_DICT[self.client_name]['server_0']
 
         body = {'context' : self.he_context.serialize(save_secret_key=False),
-                'weights_original_shape': final_weights.shape,
+                'weights_original_shape': weights.shape,
                 'encrypted_weights': final_encrypted_weights,
                 'encrypted_biases': final_encrypted_biases,
                 'iter': iteration,
@@ -290,6 +309,8 @@ class Client():
         return_weights, return_biases = self.he_params_decryption(
             encrypted_weights, encrypted_biases, weights_original_shape
         )
+        ## free
+        del encrypted_weights, encrypted_biases
         
         ## remove dp
         return_weights -= self.local_weights_noise[iteration]/ len(self.active_clients_list)
@@ -334,18 +355,18 @@ class Client():
 
 ############################################## PREDICT + EVALUATE #########################################################          
     def evaluate_accuracy(self, local_weights, local_biases, iteration):
-        file_path_model = self.temp_dir+"/model_"+str(iteration)+".h5"
+        file_path_model = self.temp_dir+"/model_"+str(iteration)+".keras"
         model = load_model(file_path_model)
         model.layers[-1].set_weights([local_weights, local_biases])
         
         if self.client_name=='client_0':
-            steps = 2030
+            steps = 200
             # 2030
         elif self.client_name =='client_1':
-            steps = 4060
+            steps = 400
             # 4060
         elif self.client_name == 'client_2':
-            steps = 6090
+            steps = 600
             # 6090
             
         loss, accuracy =model.evaluate(self.data_test, steps = steps)
@@ -362,8 +383,8 @@ class Client():
         weights_differences = np.abs(global_weights - local_weights)
         biases_differences = np.abs(global_biases - local_biases)
 
-        print("weights dif", weights_differences)
-        print("biases diff", biases_differences)
+        # print("weights dif", weights_differences)
+        # print("biases diff", biases_differences)
         if (weights_differences < tolerance_left_edge).all() and (biases_differences <tolerance_left_edge).all():
             return True
         elif (weights_differences > tolerance_right_edge).all() and (biases_differences > tolerance_right_edge).all():
