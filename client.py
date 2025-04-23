@@ -45,7 +45,7 @@ class Client():
         self.data_train = data_train
         self.data_test = data_test
         self.agent_dict = {}
-        self.temp_dir = client_name + "_log/" + datetime.now().strftime("%Hh%Mp__%d-%m")
+        self.temp_dir = "log/"+client_name + "_log/" + datetime.now().strftime("%Hh%Mp__%d-%m")
         os.makedirs(self.temp_dir, exist_ok=True)
         
         ## global
