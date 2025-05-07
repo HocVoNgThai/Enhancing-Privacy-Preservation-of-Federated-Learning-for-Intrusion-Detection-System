@@ -33,7 +33,7 @@ def find_slowest_time(messages):
     simulated_time = simulated_communication_times[slowest_client]  # simulated time it would take for server to receive all values
     return simulated_time
 
-num_iterations = 5
+num_iterations = 10
 LATENCY_DICT = {}
 
 class Message:

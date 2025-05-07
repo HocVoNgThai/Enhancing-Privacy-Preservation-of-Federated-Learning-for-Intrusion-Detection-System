@@ -39,11 +39,12 @@ class Message:
         return "Message from {self.sender} to {self.recipient}.\n Body is : {self.body} \n \n"
 
 class Client():
-    def __init__(self, client_name, data_train, data_test, active_clients_list, he_context):
+    def __init__(self, client_name, data_train, data_val, data_test, active_clients_list, he_context):
         self.client_name = client_name
         self.active_clients_list = active_clients_list
         self.data_train = data_train
         self.data_test = data_test
+        self.data_val = data_val
         self.agent_dict = {}
         self.temp_dir = "log/"+client_name + "_log/" + datetime.now().strftime("%Hh%Mp__%d-%m")
         os.makedirs(self.temp_dir, exist_ok=True)
@@ -65,6 +66,8 @@ class Client():
         self.epsilon = 1.0
         self.mean = 0
         self.steps_per_epoch = 50
+        self.validation_steps = 50
+        self.test_steps = 50
         self.local_weights_noise ={}
         self.local_biases_noise = {}
         
@@ -88,7 +91,19 @@ class Client():
         self.steps_per_epoch = steps_per_epoch
         
     def get_steps_per_epoch(self):
-        print(self.steps_per_epoch)
+        print("Train steps: ", self.steps_per_epoch)
+        
+    def set_validation_steps(self, validation_steps):
+        self.validation_steps = validation_steps
+        
+    def get_validation_steps(self):
+        print("Val steps: ", self.validation_steps)
+
+    def set_test_steps(self, test_steps):
+        self.test_steps = test_steps
+        
+    def get_test_steps(self):
+        print("Test steps: ", self.test_steps)
 ##########################################     HE CONTEXT     #################################################
     def init_he_context(self):
         """Thiết lập context mã hóa đồng hình"""
@@ -187,15 +202,18 @@ class Client():
         # =============  binary =====================
         model = keras.Sequential([
             layers.Input(shape=input_shape),
-            layers.Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"),
-            layers.MaxPooling1D(pool_size=4),
-            layers.Conv1D(filters=64, kernel_size=3,  padding="same",activation="relu"),
+            layers.Conv1D(filters=128, kernel_size=3, padding="same", strides=1, activation="relu"),
+            layers.BatchNormalization(),
+            layers.MaxPooling1D(pool_size=2),
+            layers.Conv1D(filters=128, kernel_size=3, padding="same", strides=1, activation="relu"),
+            layers.BatchNormalization(),
             layers.MaxPooling1D(pool_size=2),
             layers.Flatten(),
-            layers.Dense(128, activation='relu'),
             layers.Dropout(0.5),
-            layers.BatchNormalization(),
-            layers.Dense(1, activation='sigmoid')  # dùng sigmoid thay cho softmax
+            layers.Dense(128, activation='relu'),
+            layers.Dense(64, activation='relu'),  
+            layers.Dropout(0.3),                  
+            layers.Dense(1, activation='sigmoid')
         ])
         
         ## free
@@ -220,7 +238,7 @@ class Client():
         #     steps_per_epoch = 345
         
         #steps = int(np.ceil(self.steps_per_epoch / 100))
-        model.fit(self.data_train, epochs=5, steps_per_epoch=self.steps_per_epoch, callbacks=[csv_logger])
+        model.fit(self.data_train, epochs= 15, validation_data= self.data_val, validation_steps= self.validation_steps , steps_per_epoch= self.steps_per_epoch, verbose = 1, callbacks=[csv_logger])
         model.save(file_path_model)
         
         weights, biases = model.layers[-1].get_weights()
@@ -360,18 +378,8 @@ class Client():
         model = load_model(file_path_model, compile=False)
         model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
         model.layers[-1].set_weights([local_weights, local_biases])
-        
-        if self.client_name=='client_0':
-            steps = 200
-            # 2030
-        elif self.client_name =='client_1':
-            steps = 400
-            # 4060
-        elif self.client_name == 'client_2':
-            steps = 600
-            # 6090
             
-        loss, accuracy =model.evaluate(self.data_test, steps = steps)
+        loss, accuracy =model.evaluate(self.data_test, steps = self.test_steps)
     
         return accuracy
 ############################################## PREDICT + EVALUATE #########################################################   
