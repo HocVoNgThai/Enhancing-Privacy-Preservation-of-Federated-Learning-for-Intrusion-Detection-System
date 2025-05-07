@@ -25,7 +25,6 @@ def client_weights_returner(input_tuple):
 def client_drop_caller(input_tuple):
     clientObject, message = input_tuple
     return clientObject.remove_active_clients(message)
-
     
 def find_slowest_time(messages):
     simulated_communication_times = {message.sender: message.body['simulated_time'] for message in messages}
