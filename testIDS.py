@@ -4,16 +4,12 @@ from scapy.all import sniff, IP, TCP, UDP
 import pandas as pd
 import logging
 from datetime import datetime
-import os
 from tensorflow.keras.models import load_model
 
 class DDoSDetector:
     def __init__(self, model_path):
         self.flows = defaultdict(self._init_flow)
         self.model = load_model(model_path)
-        self.DURATION_RATIO_THRESH = 0.05
-        self.SYN_RATIO_THRESH = 0.1
-        self.SIZE_STD_THRESH = 10.0
         
         logging.basicConfig(
             format='%(asctime)s - %(levelname)s - %(message)s',
@@ -25,16 +21,12 @@ class DDoSDetector:
         return {
             'start_time': None,
             'last_active': None,
-            'src_ip': None,
+            'src_ips': set(),  # Lưu tập hợp các src_ip
             'dst_ip': None,
-            'src_port': None,
-            'dst_port': None,
             'packet_sizes': [],
             'timestamps': [],
-            'flags': defaultdict(int),
-            'protocol': None,
-            'header_length': 0,
-            'active_periods': []
+            'flags': defaultdict(int),  # Mặc định giá trị là 0 cho các cờ
+            'protocol': None
         }
 
     def start(self, interface=None):
@@ -46,12 +38,7 @@ class DDoSDetector:
             if not packet.haslayer(IP):
                 return
             ip = packet[IP]
-            dst_port = 0  # Mặc định cho các giao thức không có cổng (như ICMP)
-            if packet.haslayer(TCP):
-                dst_port = packet[TCP].dport
-            elif packet.haslayer(UDP):
-                dst_port = packet[UDP].dport
-            flow_key = (ip.dst, ip.proto)  # Nhóm theo dst_ip và protocol, bỏ qua dst_port
+            flow_key = (ip.dst, ip.proto)  # Nhóm theo dst_ip và protocol
             flow = self.flows[flow_key]
 
             if flow['start_time'] is None:
@@ -60,40 +47,25 @@ class DDoSDetector:
             if self._is_flow_complete(packet, flow):
                 features = self._extract_features(flow)
                 del self.flows[flow_key]
-                if self._is_suspicious(features):
-                    self._predict_and_alert(features)
+                self._predict_and_alert(features)  # Gọi trực tiếp, bỏ _is_suspicious
         except Exception as e:
             logging.error(f"Error processing packet: {e}")
 
     def _init_new_flow(self, flow, packet, ip):
-        src_port = dst_port = None
-        if packet.haslayer(TCP):
-            src_port = packet[TCP].sport
-            dst_port = packet[TCP].dport
-        elif packet.haslayer(UDP):
-            src_port = packet[UDP].sport
-            dst_port = packet[UDP].dport
         flow.update({
             'start_time': packet.time,
             'last_active': packet.time,
-            'src_ip': ip.src,
+            'src_ips': {ip.src},  # Lưu src_ip đầu tiên
             'dst_ip': ip.dst,
-            'src_port': src_port,
-            'dst_port': dst_port,
-            'protocol': ip.proto,
-            'active_periods': [[packet.time]]
+            'protocol': ip.proto
         })
 
     def _update_flow_stats(self, flow, packet):
-        current_time = packet.time
-        if current_time - flow['last_active'] > 1.0:
-            flow['active_periods'].append([current_time])
-        else:
-            flow['active_periods'][-1].append(current_time)
-        flow['last_active'] = current_time
+        ip = packet[IP]
+        flow['src_ips'].add(ip.src)  # Thêm src_ip vào tập hợp
+        flow['last_active'] = packet.time
+        flow['timestamps'].append(packet.time)
         flow['packet_sizes'].append(len(packet))
-        flow['timestamps'].append(current_time)
-        flow['header_length'] += packet[IP].ihl * 4 if packet.haslayer(IP) else 0
         if packet.haslayer(TCP):
             tcp = packet[TCP]
             flow['flags']['S'] += 1 if tcp.flags & 0x02 else 0  # SYN
@@ -105,126 +77,159 @@ class DDoSDetector:
 
     def _is_flow_complete(self, packet, flow):
         timeout = 120
-        is_tcp_fin_rst = packet.haslayer(TCP) and (packet[TCP].flags & 0x01 or packet[TCP].flags & 0x04)
         is_timeout = (packet.time - flow['last_active']) > timeout
-        is_packet_limit = len(flow['packet_sizes']) >= 100
-        return is_tcp_fin_rst or is_timeout or is_packet_limit
-
-    def _calculate_active_duration(self, active_periods):
-        return sum(period[-1] - period[0] for period in active_periods if len(period) > 1)
+        is_packet_limit = len(flow['timestamps']) >= 100
+        return is_timeout or is_packet_limit
 
     def _extract_features(self, flow):
         timestamps = np.array(flow['timestamps'])
-        flow_duration = (timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 1e-6
-        active_duration = self._calculate_active_duration(flow['active_periods'])
+        flow_duration = (timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0
         packet_sizes = np.array(flow['packet_sizes'])
+        packet_count = len(flow['timestamps'])
+        rate = packet_count / flow_duration if flow_duration > 0 else 0
         iats = np.diff(timestamps) if len(timestamps) > 1 else np.array([0])
-        
-        total_bytes = sum(flow['packet_sizes'])
-        packet_count = len(flow['packet_sizes'])
-        avg_packet_size = np.mean(packet_sizes) if packet_sizes.size > 0 else 0
-        std_packet_size = np.std(packet_sizes) if packet_sizes.size > 0 else 0
-        
+        iat_mean = np.mean(iats) if iats.size > 0 else 0
+
         is_tcp = 1 if flow['protocol'] == 6 else 0
         is_udp = 1 if flow['protocol'] == 17 else 0
         is_icmp = 1 if flow['protocol'] == 1 else 0
-        
-        flags = flow['flags']
-        is_malicious = (std_packet_size < self.SIZE_STD_THRESH or
-                        (flags.get('S', 0) / packet_count > self.SYN_RATIO_THRESH if packet_count > 0 else False))
-        duration = 64.0 if is_malicious else flow_duration * 2.55
-        weight = 141.55 if is_malicious else 38.5
-        
-        if duration < flow_duration:
-            duration = flow_duration
-        
+        total_bytes = sum(flow['packet_sizes']) if packet_sizes.size > 0 else 0
+        avg_packet_size = np.mean(packet_sizes) if packet_sizes.size > 0 else 0
+        std_packet_size = np.std(packet_sizes) if packet_sizes.size > 0 else 0
+        min_packet_size = np.min(packet_sizes) if packet_sizes.size > 0 else 0
+        max_packet_size = np.max(packet_sizes) if packet_sizes.size > 0 else 0
+
         features = {
             'flow_duration': flow_duration,
-            'Header_Length': flow['header_length'],
+            'Header_Length': 0,  # Placeholder (có thể lấy từ packet[IP].ihl * 4 nếu cần)
             'Protocol Type': flow['protocol'],
-            'Duration': duration,
-            'Rate': packet_count / flow_duration if flow_duration > 0 else 0,
-            'Srate': packet_count / flow_duration if flow_duration > 0 else 0,
-            'Drate': 0.0,
-            'fin_flag_number': flags.get('F', 0),
-            'syn_flag_number': flags.get('S', 0),
-            'rst_flag_number': flags.get('R', 0),
-            'psh_flag_number': flags.get('P', 0),
-            'ack_flag_number': flags.get('A', 0),
-            'ece_flag_number': 0,
-            'cwr_flag_number': 0,
-            'ack_count': flags.get('A', 0) * 1.36 if is_malicious else flags.get('A', 0),
-            'syn_count': flags.get('S', 0) * 1.36 if is_malicious else flags.get('S', 0),
-            'fin_count': flags.get('F', 0),
-            'urg_count': flags.get('U', 0),
-            'rst_count': flags.get('R', 0),
-            'HTTP': 1 if flow['dst_port'] in [80] or flow['src_port'] in [80] else 0,
-            'HTTPS': 1 if flow['dst_port'] in [443] or flow['src_port'] in [443] else 0,
-            'DNS': 1 if flow['dst_port'] in [53] or flow['src_port'] in [53] else 0,
-            'Telnet': 1 if flow['dst_port'] in [23] or flow['src_port'] in [23] else 0,
-            'SMTP': 1 if flow['dst_port'] in [25] or flow['src_port'] in [25] else 0,
-            'SSH': 1 if flow['dst_port'] in [22] or flow['src_port'] in [22] else 0,
-            'IRC': 1 if flow['dst_port'] in [6667] or flow['src_port'] in [6667] else 0,
+            'Duration': flow_duration,  # Sử dụng flow_duration làm placeholder
+            'Rate': rate,
+            'Srate': rate,  # Sử dụng Rate làm placeholder
+            'Drate': 0,  # Placeholder
+            'fin_flag_number': flow['flags']['F'],
+            'syn_flag_number': flow['flags']['S'],
+            'rst_flag_number': flow['flags']['R'],
+            'psh_flag_number': flow['flags']['P'],
+            'ack_flag_number': flow['flags']['A'],
+            'ece_flag_number': 0,  # Placeholder
+            'cwr_flag_number': 0,  # Placeholder
+            'ack_count': flow['flags']['A'],  # Placeholder (có thể nhân với hệ số nếu cần)
+            'syn_count': flow['flags']['S'],  # Placeholder
+            'fin_count': flow['flags']['F'],
+            'urg_count': flow['flags']['U'],
+            'rst_count': flow['flags']['R'],
+            'HTTP': 0,  # Placeholder (có thể kiểm tra port 80)
+            'HTTPS': 0,  # Placeholder (có thể kiểm tra port 443)
+            'DNS': 0,    # Placeholder (có thể kiểm tra port 53)
+            'Telnet': 0, # Placeholder (có thể kiểm tra port 23)
+            'SMTP': 0,   # Placeholder (có thể kiểm tra port 25)
+            'SSH': 0,    # Placeholder (có thể kiểm tra port 22)
+            'IRC': 0,    # Placeholder (có thể kiểm tra port 6667)
             'TCP': is_tcp,
             'UDP': is_udp,
-            'DHCP': 1 if flow['dst_port'] in [67, 68] or flow['src_port'] in [67, 68] else 0,
-            'ARP': 0,
+            'DHCP': 0,   # Placeholder (có thể kiểm tra port 67, 68)
+            'ARP': 0,    # Placeholder
             'ICMP': is_icmp,
-            'IPv': 1,
-            'LLC': 1,
+            'IPv': 1,    # Placeholder
+            'LLC': 1,    # Placeholder
             'Tot sum': total_bytes,
-            'Min': np.min(packet_sizes) if packet_sizes.size > 0 else 0,
-            'Max': np.max(packet_sizes) if packet_sizes.size > 0 else 0,
+            'Min': min_packet_size,
+            'Max': max_packet_size,
             'AVG': avg_packet_size,
             'Std': std_packet_size,
             'Tot size': total_bytes,
-            'IAT': np.mean(iats) if iats.size > 0 else 0,
+            'IAT': iat_mean,
             'Number': packet_count,
             'Magnitue': np.sqrt(packet_count),
             'Radius': np.sqrt(np.sum(np.diff(packet_sizes)**2)) if packet_sizes.size > 1 else 0,
-            'Covariance': np.cov(packet_sizes, bias=True) if packet_sizes.size > 1 else 0,
+            'Covariance': 0,  # Placeholder (có thể tính lại nếu cần)
             'Variance': np.var(packet_sizes) if packet_sizes.size > 0 else 0,
-            'Weight': weight,
-            'src_ip': flow['src_ip'],
+            'Weight': 38.5,  # Placeholder
+            'src_ips': flow['src_ips'],
             'dst_ip': flow['dst_ip']
         }
+
+        # Gán các giá trị cho cờ để sử dụng trong _alert
+        features['urg_flag_number'] = flow['flags']['U']  # Đảm bảo key này tồn tại
+
+        # Chuyển features thành DataFrame với 46 cột
+        feature_df = pd.DataFrame([{
+            'flow_duration': features['flow_duration'],
+            'Header_Length': features['Header_Length'],
+            'Protocol Type': features['Protocol Type'],
+            'Duration': features['Duration'],
+            'Rate': features['Rate'],
+            'Srate': features['Srate'],
+            'Drate': features['Drate'],
+            'fin_flag_number': features['fin_flag_number'],
+            'syn_flag_number': features['syn_flag_number'],
+            'rst_flag_number': features['rst_flag_number'],
+            'psh_flag_number': features['psh_flag_number'],
+            'ack_flag_number': features['ack_flag_number'],
+            'ece_flag_number': features['ece_flag_number'],
+            'cwr_flag_number': features['cwr_flag_number'],
+            'ack_count': features['ack_count'],
+            'syn_count': features['syn_count'],
+            'fin_count': features['fin_count'],
+            'urg_count': features['urg_count'],
+            'rst_count': features['rst_count'],
+            'HTTP': features['HTTP'],
+            'HTTPS': features['HTTPS'],
+            'DNS': features['DNS'],
+            'Telnet': features['Telnet'],
+            'SMTP': features['SMTP'],
+            'SSH': features['SSH'],
+            'IRC': features['IRC'],
+            'TCP': features['TCP'],
+            'UDP': features['UDP'],
+            'DHCP': features['DHCP'],
+            'ARP': features['ARP'],
+            'ICMP': features['ICMP'],
+            'IPv': features['IPv'],
+            'LLC': features['LLC'],
+            'Tot sum': features['Tot sum'],
+            'Min': features['Min'],
+            'Max': features['Max'],
+            'AVG': features['AVG'],
+            'Std': features['Std'],
+            'Tot size': features['Tot size'],
+            'IAT': features['IAT'],
+            'Number': features['Number'],
+            'Magnitue': features['Magnitue'],
+            'Radius': features['Radius'],
+            'Covariance': features['Covariance'],
+            'Variance': features['Variance'],
+            'Weight': features['Weight']
+        }])
+
+        features['feature_df'] = feature_df
         return features
 
-    def _is_suspicious(self, features):
-        if features['Number'] <= 1:
-            return False
-        duration_ratio = features['flow_duration'] / features['Duration'] if features['Duration'] > 0 else 0
-        syn_ratio = features['syn_flag_number'] / features['Number'] if features['Number'] > 0 else 0
-        return (duration_ratio < self.DURATION_RATIO_THRESH or 
-                syn_ratio > self.SYN_RATIO_THRESH or
-                features['Std'] < self.SIZE_STD_THRESH)
-
     def _predict_and_alert(self, features):
-        feature_columns = [
-            'flow_duration', 'Header_Length', 'Protocol Type', 'Duration', 'Rate', 'Srate', 'Drate',
-            'fin_flag_number', 'syn_flag_number', 'rst_flag_number', 'psh_flag_number', 'ack_flag_number',
-            'ece_flag_number', 'cwr_flag_number', 'ack_count', 'syn_count', 'fin_count', 'urg_count',
-            'rst_count', 'HTTP', 'HTTPS', 'DNS', 'Telnet', 'SMTP', 'SSH', 'IRC', 'TCP', 'UDP', 'DHCP',
-            'ARP', 'ICMP', 'IPv', 'LLC', 'Tot sum', 'Min', 'Max', 'AVG', 'Std', 'Tot size', 'IAT',
-            'Number', 'Magnitue', 'Radius', 'Covariance', 'Variance', 'Weight'
-        ]
-        df = pd.DataFrame([{k: features[k] for k in feature_columns}])
-        prediction = self.model.predict(df, verbose=0)
+        prediction = self.model.predict(features['feature_df'], verbose=0)
         probability = float(prediction[0][0] if prediction.shape[-1] == 1 else prediction[0][1])
         if probability > 0.5:
             self._alert(features, probability)
 
     def _alert(self, features, probability):
-        protocol_name = {6: "TCP", 17: "UDP", 1: "ICMP"}.get(features['Protocol Type'], "Unknown")
+        flags_str = ', '.join([f"{k}={v}" for k, v in {
+            'SYN': features['syn_flag_number'],
+            'ACK': features['ack_flag_number'],
+            'FIN': features['fin_flag_number'],
+            'RST': features['rst_flag_number'],
+            'PSH': features['psh_flag_number'],
+            'URG': features['urg_flag_number']
+        }.items() if v > 0])
+        src_ip_display = list(features['src_ips'])[0] if len(features['src_ips']) == 1 else f"Multiple sources ({len(features['src_ips'])} IPs)"
         alert_msg = f"""
         🚨 DDoS ATTACK DETECTED 🚨
-        Source: {features.get('src_ip', 'N/A')}
-        Target: {features.get('dst_ip', 'N/A')}
-        Protocol: {protocol_name}
+        Confidence: {probability*100:.2f}%
+        Source: {src_ip_display}
+        Target: {features['dst_ip']}
         Flow Duration: {features['flow_duration']:.6f}s
         Packet Count: {features['Number']}
-        Average Packet Size: {features['AVG']:.2f}
-        IAT: {features['IAT']:.6f}s
+        Flags: {flags_str if flags_str else 'None'}
         """
         logging.warning(alert_msg)
         self._log_attack(features, probability)
@@ -234,7 +239,7 @@ class DDoSDetector:
             'timestamp': datetime.now().isoformat(),
             'label': 1,
             'probability': probability,
-            **{k: v for k, v in features.items() if k not in ['src_ip', 'dst_ip']}
+            **{k: v for k, v in features.items() if k not in ['src_ips', 'dst_ip', 'feature_df']}
         }
         log_df = pd.DataFrame([log_entry])
         log_df.to_csv('ddos_attacks.csv', mode='a', header=not os.path.exists('ddos_attacks.csv'), index=False)
