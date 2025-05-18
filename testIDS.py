@@ -1,11 +1,14 @@
 import numpy as np
 from collections import defaultdict
-from scapy.all import sniff, IP, TCP, UDP
+from scapy.all import sniff, IP, TCP, UDP, get_if_list, get_if_addr,conf, L3RawSocket
 import pandas as pd
-import logging
-from datetime import datetime
 from tensorflow.keras.models import load_model
 
+############# sys #############
+import logging
+from datetime import datetime
+import os, sys
+############# sys ##############
 class DDoSDetector:
     def __init__(self, model_path):
         self.flows = defaultdict(self._init_flow)
@@ -30,6 +33,7 @@ class DDoSDetector:
         }
 
     def start(self, interface=None):
+        conf.L3socket = L3RawSocket
         logging.info(f"🚀 Starting DDoS detector on interface {interface or 'default'}")
         sniff(prn=self.process_packet, store=False, iface=interface)
 
@@ -248,5 +252,9 @@ class DDoSDetector:
         pass  # Bỏ qua phần chặn IP
 
 if __name__ == "__main__":
-    detector = DDoSDetector('saved_model/cnn_model_2-0_batch512_20h37p__06-05-2025.keras')
+    
+    # interfaces = get_if_list()
+    # for index, iface in enumerate(interfaces):
+    #     print(f"{index}:  {get_if_addr(iface)}")
+    detector = DDoSDetector('model/cnn_model_2-0_batch512_20h37p__06-05-2025.keras')
     detector.start(interface='eth0')
