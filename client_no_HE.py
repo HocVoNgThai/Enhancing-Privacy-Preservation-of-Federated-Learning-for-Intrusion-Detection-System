@@ -17,7 +17,7 @@ from tensorflow import keras
 from tensorflow.keras.callbacks import CSVLogger
 from tensorflow.keras.utils import Sequence, to_categorical
 from tensorflow.keras.models import Sequential
-from tensorflow.keras import layers, models
+from tensorflow.keras import layers, models, optimizers
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization
 from tensorflow.keras import regularizers
 # Giả lập module dp_mechanisms (thay bằng module thực tế của bạn)
@@ -144,8 +144,8 @@ class Client:
             layers.BatchNormalization(),
             layers.Dense(1, activation='sigmoid')
         ])
-
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        adam_optimizer = optimizers.Adam(learning_rate=1e-5)
+        model.compile(optimizer= adam_optimizer, loss='binary_crossentropy', metrics=['accuracy'])
         return model
     """
     # Thêm nhiễu DP
