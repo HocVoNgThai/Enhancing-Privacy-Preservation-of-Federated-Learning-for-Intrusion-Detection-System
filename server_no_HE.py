@@ -30,7 +30,8 @@ class Server:
         #self.global_loss = {}
         self.active_clients_list = active_clients_list
         self.agents_dict = {}
-
+        self.client_data_sizes = {}
+        
         for name in active_clients_list:
             if name not in LATENCY_DICT.keys():
                 LATENCY_DICT[name] = {}
@@ -42,6 +43,9 @@ class Server:
 
     def set_agentsDict(self, agents_dict):
         self.agents_dict = agents_dict
+        for client_name in self.active_clients_list:
+            client = self.agents_dict['client'][client_name]
+            self.client_data_sizes[client_name] = client.steps_per_epoch * 512  # Giả sử batch_size = 512
 
     def get_av(self):
         return self.active_clients_list
@@ -53,6 +57,56 @@ class Server:
         return None
 
     # Tính trung bình trọng số và bias
+    def average_params(self, messages):
+        if not messages:
+            return None, None
+        
+        # Lấy trọng số và bias từ message đầu tiên làm mẫu
+        sample_weights = messages[0].body['weights']
+        sample_biases = messages[0].body['biases']
+        
+        # Khởi tạo mảng tổng cho mỗi lớp
+        weights_sum = [np.zeros_like(w) for w in sample_weights]
+        biases_sum = [np.zeros_like(b) for b in sample_biases]
+        
+        # Tính tổng dữ liệu
+        total_data = sum(self.client_data_sizes[m.sender] for m in messages)
+
+        # Tính tổng trọng số và bias từ tất cả client, có trọng số
+        for message in messages:
+            weights = message.body['weights']
+            biases = message.body['biases']
+            client_weight = self.client_data_sizes[message.sender] / total_data
+            for i in range(len(weights_sum)):
+                weights_sum[i] += weights[i] * client_weight
+                biases_sum[i] += biases[i] * client_weight
+
+        return weights_sum, biases_sum
+    """
+    def average_params(self, messages):
+        if not messages:
+                return None, None
+        # Lấy trọng số và bias từ message đầu tiên làm mẫu
+        sample_weights = messages[0].body['weights']
+        sample_biases = messages[0].body['biases']
+            
+        # Khởi tạo mảng tổng cho mỗi lớp
+        weights_sum = [np.zeros_like(w) for w in sample_weights]
+        biases_sum = [np.zeros_like(b) for b in sample_biases]
+    
+        # Tính tổng trọng số và bias từ tất cả client
+        for message in messages:
+            weights = message.body['weights']
+            biases = message.body['biases']
+            for i in range(len(weights_sum)):
+                weights_sum[i] += weights[i]
+                biases_sum[i] += biases[i]
+    
+        # Tính trung bình cho mỗi lớp
+        avg_weights = [w / len(self.active_clients_list) for w in weights_sum]
+        avg_biases = [b / len(self.active_clients_list) for b in biases_sum]
+            
+        return avg_weights, avg_biases
     
     def average_params(self, messages):
         weights_sum = np.zeros_like(messages[0].body['weights'])
@@ -65,7 +119,7 @@ class Server:
         avg_weights = weights_sum / len(self.active_clients_list)
         avg_biases = biases_sum / len(self.active_clients_list)
         return avg_weights, avg_biases
-    """
+    
     def average_params(self, messages):
         if not messages:
             return None, None

@@ -70,14 +70,14 @@ class Client:
         self.unconvergence = 0
 
         # DP parameters
-        self.alpha = 1.0
-        self.epsilon = 1.0  # Tăng lên 1.0 để giảm nhiễu
+        #self.alpha = 1.0
+        #self.epsilon = 1.0  # Tăng lên 1.0 để giảm nhiễu
         self.mean = 0
         self.steps_per_epoch = steps_per_epoch
         self.validation_steps = val_steps
         self.test_steps = test_steps
-        self.local_weights_noise = {}
-        self.local_biases_noise = {}
+        #self.local_weights_noise = {}
+        #self.local_biases_noise = {}
 
         # Khởi tạo LATENCY_DICT
         for name in active_clients_list:
@@ -136,22 +136,18 @@ class Client:
         # Mô hình binary classification
         model = keras.Sequential([
             layers.Input(shape=input_shape),
-            #layers.Conv1D(filters=128, kernel_size=3, padding="same", strides=1, activation="relu"),
-            layers.Conv1D(filters=128, kernel_size=3, padding="same", strides=1, activation="relu", kernel_regularizer=regularizers.l2(0.01)),
-            layers.BatchNormalization(),
-            #layers.Conv1D(filters=128, kernel_size=3, padding="same", strides=1, activation="relu"),
-            layers.Conv1D(filters=128, kernel_size=3, padding="same", strides=1, activation="relu", kernel_regularizer=regularizers.l2(0.01)),
-            layers.BatchNormalization(),
+            layers.Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"),
             layers.MaxPooling1D(pool_size=2),
-            layers.Dropout(0.6),
             layers.Flatten(),
             layers.Dense(128, activation='relu'),
+            layers.Dropout(0.5),   
+            layers.BatchNormalization(),
             layers.Dense(1, activation='sigmoid')
         ])
 
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         return model
-
+    """
     # Thêm nhiễu DP
     def add_gamma_noise(self, local_weights, local_biases, iteration):
         weights_dp_noise = []
@@ -178,13 +174,14 @@ class Client:
         weights_with_noise = local_weights + weights_dp_noise
         biases_with_noise = local_biases + biases_dp_noise
         return np.array(weights_with_noise), np.array(biases_with_noise)
-
+    """
     # Huấn luyện mô hình
     def model_fit(self, iteration):
         file_path = self.temp_dir + "/Iteration_" + str(iteration) + ".csv"
         file_path_model = self.temp_dir + "/model_" + str(iteration) + ".keras"
         csv_logger = CSVLogger(file_path, append=True)
 
+        """
         if iteration > 1:
             print(f"{iteration} {self.client_name} Model update params!")
             index = 0
@@ -192,16 +189,24 @@ class Client:
                 if layer.name.startswith('conv1d') or layer.name.startswith('dense'):
                     layer.set_weights([self.local_weights[iteration-1][index], self.local_biases[iteration-1][index]])
                     index += 1
-
+        """
+        if iteration > 1:
+            print(f"{iteration} {self.client_name} Model update params with global weights!")
+            index = 0
+            for layer in self.model.layers:
+                if layer.name.startswith('conv1d') or layer.name.startswith('dense'):
+                    layer.set_weights([self.global_weights[iteration-1][index], self.global_biases[iteration-1][index]])
+                    index += 1
         # Huấn luyện
-        self.model.fit(self.data_train, epochs=4, validation_data=self.data_val, validation_steps=self.validation_steps,
+        self.model.fit(self.data_train, epochs=3, validation_data=self.data_val, validation_steps=self.validation_steps,
                        steps_per_epoch=self.steps_per_epoch, verbose=1, callbacks=[csv_logger])
-
+    
+        """
         # Đóng băng BatchNormalization sau huấn luyện
         for layer in self.model.layers:
             if isinstance(layer, layers.BatchNormalization):
                 layer.trainable = False
-
+        """
         self.model.save(file_path_model)
         print("Come done model fit\n")
 
@@ -228,15 +233,16 @@ class Client:
             del self.local_weights[iteration-1]  # Xóa iteration cũ (giữ 2 iteration gần nhất)
             del self.local_biases[iteration-1]
         # Flatten weights
+        """
         if iteration == 1:
             self.save_shape(weights, biases, iteration)
         flattened_weights, flattened_biases = self.flatten_weights(weights, biases)
-
+        
         # Thêm nhiễu DP
         lock.acquire()
         flattened_weights, flattened_biases = self.add_gamma_noise(flattened_weights, flattened_biases, iteration)
         lock.release()
-
+        """
         end_time = datetime.now()
         compute_time = end_time - start_time
         self.compute_times[iteration] = compute_time
@@ -245,8 +251,8 @@ class Client:
             
         simulated_time += compute_time + LATENCY_DICT[self.client_name]['server_0']
         body = {
-            'weights': flattened_weights,  # Gửi trực tiếp, không mã hóa
-            'biases': flattened_biases,
+            'weights': weights,  # Gửi trực tiếp, không mã hóa
+            'biases': biases,
             'iter': iteration,
             'compute_time': compute_time,
             'simulated_time': simulated_time
@@ -266,20 +272,23 @@ class Client:
         return_biases = body['biases']
 
         # Kiểm tra giá trị trọng số
-        print(f"[{self.client_name}] Received weights stats: min={np.min(return_weights)}, max={np.max(return_weights)}, mean={np.mean(return_weights)}")
-        print(f"[{self.client_name}] Received biases stats: min={np.min(return_biases)}, max={np.max(return_biases)}, mean={np.mean(return_biases)}")
-
+        #print(f"[{self.client_name}] Received weights stats: min={np.min(return_weights)}, max={np.max(return_weights)}, mean={np.mean(return_weights)}")
+        #print(f"[{self.client_name}] Received biases stats: min={np.min(return_biases)}, max={np.max(return_biases)}, mean={np.mean(return_biases)}")
+        """
         # Loại bỏ nhiễu
         return_weights -= self.local_weights_noise[iteration]
         return_biases -= self.local_biases_noise[iteration]
-
+        
         self.global_weights[iteration], self.global_biases[iteration] = self.de_flatten_weights(return_weights, return_biases)
+        """
+        self.global_weights[iteration], self.global_biases[iteration] = return_weights, return_biases
+        
         self.save_global_model(iteration)
         if iteration > 1:
             del self.global_weights[iteration-1]  # Xóa iteration cũ
             del self.global_biases[iteration-1]
-            del self.local_weights_noise[iteration-1]  # Xóa nhiễu cũ
-            del self.local_biases_noise[iteration-1]
+            #del self.local_weights_noise[iteration-1]  # Xóa nhiễu cũ
+            #del self.local_biases_noise[iteration-1]
             
         # Đánh giá mô hình
         self.local_accuracy[iteration], self.local_loss[iteration] = self.evaluate_accuracy(self.local_weights[iteration], self.local_biases[iteration])
@@ -342,6 +351,71 @@ class Client:
 
     # Kiểm tra hội tụ
     def check_convergence(self, iteration):
+        if iteration < 2:
+            return False
+        
+        # So sánh global accuracy và loss giữa các iteration
+        acc_diff = abs(self.global_accuracy[iteration] - self.global_accuracy[iteration-1])
+        loss_diff = abs(self.global_loss[iteration] - self.global_loss[iteration-1])
+        
+        # Nếu thay đổi nhỏ (dưới ngưỡng) và global accuracy cao, coi như hội tụ
+        if acc_diff < 0.01 and loss_diff < 0.05 and self.global_accuracy[iteration] > 0.9 and self.global_loss[iteration] < 0.1:
+            self.convergence += 1
+        else: 
+            self.convergence -= 1
+        if self.convergence > 2:
+            return True
+        return False
+    """
+    def check_convergence(self, iteration):
+        tolerance_left_edge = 0.05
+        tolerance_right_edge = 2.0
+
+        if iteration > 1:
+            # So sánh sự thay đổi của global loss
+            if self.global_loss[iteration] > self.global_loss[iteration-1]:
+                self.unconvergence += 1
+            else:
+                self.unconvergence -= 1
+                if self.unconvergence < 0:
+                    self.unconvergence = 0
+            if self.global_accuracy[iteration] <= self.global_accuracy[iteration-1]:
+                self.unconvergence += 1
+            else:
+                self.unconvergence -= 1
+                if self.unconvergence < 0:
+                    self.unconvergence = 0
+
+            # So sánh sự thay đổi của global loss giữa các iteration
+            if abs(self.global_loss[iteration] - self.global_loss[iteration-1]) < 0.05:
+                self.convergence += 1
+            else:
+                self.convergence -= 1
+                if self.convergence < 0:
+                    self.convergence = 0
+
+        flattened_global_weights, flattened_global_bias = self.flatten_weights(self.global_weights[iteration], self.global_biases[iteration])
+        flattened_local_weights, flattened_local_bias = self.flatten_weights(self.local_weights[iteration], self.local_biases[iteration])
+
+        weights_differences = np.abs(flattened_global_weights - flattened_local_weights)
+        biases_differences = np.abs(flattened_global_bias - flattened_local_bias)
+
+        if (weights_differences < tolerance_left_edge).all() and (biases_differences < tolerance_left_edge).all():
+            self.convergence += 1
+        elif (weights_differences > tolerance_right_edge).all() and (biases_differences > tolerance_right_edge).all():
+            self.convergence += 1
+        else:
+            self.convergence -= 1
+            if self.convergence < 0:
+                self.convergence = 0
+
+        if self.convergence > 3 and self.unconvergence < 3:
+            return True
+        elif self.unconvergence > 3:
+            return True
+        return False
+    #######
+    def check_convergence(self, iteration):
         tolerance_left_edge = 0.05
         tolerance_right_edge = 2.0
 
@@ -382,7 +456,7 @@ class Client:
         elif self.unconvergence > 3:
             return True
         return False
-
+    """
     # Xóa client
     def remove_active_clients(self, message):
         body = message.body
@@ -391,7 +465,7 @@ class Client:
 
         self.active_clients_list = [active_client for active_client in self.active_clients_list if active_client not in removing_clients]
         return None
-
+    
     # Lưu shape của trọng số và bias
     def save_shape(self, weights, biases, iteration):
         if iteration <2:
