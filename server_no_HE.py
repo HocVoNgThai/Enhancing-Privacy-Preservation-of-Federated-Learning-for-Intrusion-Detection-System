@@ -26,8 +26,6 @@ class Server:
         self.server_name = server_name
         self.global_weights = {}
         self.global_biases = {}
-        #self.global_accuracy = {}
-        #self.global_loss = {}
         self.active_clients_list = active_clients_list
         self.agents_dict = {}
         self.client_data_sizes = {}
@@ -80,62 +78,10 @@ class Server:
             for i in range(len(weights_sum)):
                 weights_sum[i] += weights[i] * client_weight
                 biases_sum[i] += biases[i] * client_weight
-
         return weights_sum, biases_sum
-    """
-    def average_params(self, messages):
-        if not messages:
-                return None, None
-        # Lấy trọng số và bias từ message đầu tiên làm mẫu
-        sample_weights = messages[0].body['weights']
-        sample_biases = messages[0].body['biases']
-            
-        # Khởi tạo mảng tổng cho mỗi lớp
-        weights_sum = [np.zeros_like(w) for w in sample_weights]
-        biases_sum = [np.zeros_like(b) for b in sample_biases]
-    
-        # Tính tổng trọng số và bias từ tất cả client
-        for message in messages:
-            weights = message.body['weights']
-            biases = message.body['biases']
-            for i in range(len(weights_sum)):
-                weights_sum[i] += weights[i]
-                biases_sum[i] += biases[i]
-    
-        # Tính trung bình cho mỗi lớp
-        avg_weights = [w / len(self.active_clients_list) for w in weights_sum]
-        avg_biases = [b / len(self.active_clients_list) for b in biases_sum]
-            
-        return avg_weights, avg_biases
-    
-    def average_params(self, messages):
-        weights_sum = np.zeros_like(messages[0].body['weights'])
-        biases_sum = np.zeros_like(messages[0].body['biases'])
 
-        for message in messages:
-            weights_sum += message.body['weights']
-            biases_sum += message.body['biases']
-
-        avg_weights = weights_sum / len(self.active_clients_list)
-        avg_biases = biases_sum / len(self.active_clients_list)
-        return avg_weights, avg_biases
-    
-    def average_params(self, messages):
-        if not messages:
-            return None, None
-        total_data = sum(self.client_data_sizes[m.sender] for m in messages)
-        weights_sum = np.zeros_like(messages[0].body['weights'])
-        biases_sum = np.zeros_like(messages[0].body['biases'])
-
-        for message in messages:
-            weight = self.client_data_sizes[message.sender] / total_data
-            weights_sum += message.body['weights'] * weight
-            biases_sum += message.body['biases'] * weight
-
-        return weights_sum, biases_sum
-    """  
     def InitLoop(self):
-        converged_clients = {}  # Client đã hội tụ
+        converged_clients = {}  
         active_clients_list = self.active_clients_list
 
         for iteration in range(1, num_iterations + 1):
@@ -211,7 +157,7 @@ class Server:
                 __ = calling_removing_pool.map(client_drop_caller, arguments)
 
             if iteration > 1:
-                del self.global_weights[iteration-1]  # Xóa iteration cũ
+                del self.global_weights[iteration-1] 
                 del self.global_biases[iteration-1]
             print("====================================== Kết thúc Iteration " + str(iteration) + " ======================================")
 
