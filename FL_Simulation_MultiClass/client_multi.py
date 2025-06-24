@@ -182,7 +182,7 @@ class Client:
                     layer.set_weights([self.global_weights[iteration-1][index], self.global_biases[iteration-1][index]])
                     index += 1
 
-        self.model.fit(self.data_train, epochs=5, validation_data=self.data_val, validation_steps=self.validation_steps,
+        self.model.fit(self.data_train, epochs= 8, validation_data=self.data_val, validation_steps=self.validation_steps,
                        steps_per_epoch=self.steps_per_epoch, verbose=1, callbacks=[csv_logger])
 
         self.model.save(file_path_model)
@@ -323,7 +323,7 @@ class Client:
         else: 
             self.convergence = 0
     
-        if self.convergence > 2:
+        if self.convergence > 4:
             return True
         return False
 

@@ -9,7 +9,7 @@ import gc
 # Giả lập module dp_mechanisms (thay bằng module thực tế của bạn)
 from dp_mechanisms import laplace
 
-num_iterations = 5
+num_iterations = 8
 LATENCY_DICT = {}
 
 class Message:
