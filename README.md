@@ -30,7 +30,7 @@ In [Centralize_CNN](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservatio
 Three folders are [FL_Simulation_Have_DP](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_Simulation_Have_DP), [FL_Simulation_no_DP](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_Simulation_No_PP), [FL_Simulation_MultiClass](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_Simulation_MultiClass) contain the main source code in my our research. The first two folders contain the source code I used to test with the binary dataset. In these experiments, I conducted runs both without applying any privacy preservation (PP) methods during the model exchange process and with Differential Privacy (DP) integrated into this process. The last folder, I tested with multi-label dataset, and this time I integrated both Differential Privacy (DP) and Homomorphic Encryption (HE) into the model exchange process.
 
 ## Log Storage
-Finally, I use three folders to storage logs and trained models from three different kinds of training process:
+Finally, I use fours folders to storage logs and trained models from three different kinds of training process:
 
 - [log_centralize](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/log_centralize) and [saved_model_centralize](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/saved_model_centralize) folders contain logs and models of centralized training process.
 
