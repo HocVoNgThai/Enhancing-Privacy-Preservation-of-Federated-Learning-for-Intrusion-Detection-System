@@ -11,3 +11,18 @@ The source code in this repository includes the entire implementation of our res
 | ------------------ | -------- | 
 | [VoNguyenThaiHoc](https://github.com/HocVoNgThai) | [vonguyenthaihocilt260@gmail.com](mailto:vonguyenthaihocilt260@gmail.com) |
 | [VoNhatHoang](https://github.com/VoNhtHoang) | [22520481@gm.uit.edu.vn](mailto:22520481@gm.uit.edu.vn) |
+
+## Requirements
+You can run the programs in the source code on platforms such as Kaggle, Google Colab, or any other platform that supports running with GPU. As for me, I train locally on a WSL2 environment. About environment setup, i followed tutorial from this [repo](https://github.com/mahbub-aumi/tensorflow-cuda-wsl-ubuntu24.04) and [video](https://youtu.be/VOJq98BLjb8?si=fHDSOZ6bB1XfUJlB). You can follow this to set up the environment yourself. In addition, you’ll also need to run the following command to install the required libraries.
+```
+bash install.sh
+```
+## Dataset
+
+## Data processing
+
+## Centralized training
+
+## Decentralized training
+
+## Log
