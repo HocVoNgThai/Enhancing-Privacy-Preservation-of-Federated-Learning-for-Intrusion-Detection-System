@@ -13,7 +13,7 @@ The source code in this repository includes the entire implementation of our res
 | [VoNhatHoang](https://github.com/VoNhtHoang) | [22520481@gm.uit.edu.vn](mailto:22520481@gm.uit.edu.vn) |
 
 ## Requirements
-You can run the programs in the source code on platforms such as Kaggle, Google Colab, or any other platform that supports running with GPU. As for me, I train locally on a WSL2 environment. About environment setup, i followed tutorial from this [repo](https://github.com/mahbub-aumi/tensorflow-cuda-wsl-ubuntu24.04) and [video](https://youtu.be/VOJq98BLjb8?si=fHDSOZ6bB1XfUJlB). You can follow this to set up the environment yourself. In addition, you’ll also need to run the following command to install the required libraries.
+You can run the programs in the source code on platforms such as Kaggle, Google Colab, or any other platform that supports running with GPU. As for me, I train locally on a WSL2 environment. About environment setup, i followed tutorial from this [repo](https://github.com/mahbub-aumi/tensorflow-cuda-wsl-ubuntu24.04) and [video](https://youtu.be/VOJq98BLjb8?si=fHDSOZ6bB1XfUJlB). You can follow this to set up the environment yourself. In addition, you’ll also need to run the following command to install the required libraries:
 ```
 bash install.sh
 ```
@@ -29,9 +29,11 @@ In [Centralize_CNN](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservatio
 ## Decentralized training
 Three folders are [FL_Simulation_Have_DP](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_Simulation_Have_DP), [FL_Simulation_no_DP](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_Simulation_No_PP), [FL_Simulation_MultiClass](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_Simulation_MultiClass) contain the main source code in my our research. The first two folders contain the source code I used to test with the binary dataset. In these experiments, I conducted runs both without applying any privacy preservation (PP) methods during the model exchange process and with Differential Privacy (DP) integrated into this process. The last folder, I tested with multi-label dataset, and this time I integrated both Differential Privacy (DP) and Homomorphic Encryption (HE) into the model exchange process.
 
-## Log
-[log_centralize](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/log_centralize) and [saved_model_centralize](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/saved_model_centralize) folders contain logs and models of centralized training process.
+## Log Storage
+Finally, I use three folders to storage logs and trained models from three different kinds of training process:
 
-[federated_learning_log](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/federated_learning_log) folder contains logs, local and global models of any clients after FL training process with binary dataset.
+- [log_centralize](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/log_centralize) and [saved_model_centralize](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/saved_model_centralize) folders contain logs and models of centralized training process.
 
-[multiclass_FL_log](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/multiclass_FL_log) folder contains logs, local and global models of any clients after FL training process with multi-label dataset.
+- [federated_learning_log](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/federated_learning_log) folder contains logs, local and global models of any clients after FL training process with binary dataset.
+
+- [multiclass_FL_log](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/multiclass_FL_log) folder contains logs, local and global models of any clients after FL training process with multi-label dataset.
