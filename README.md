@@ -9,5 +9,5 @@ The source code in this repository includes the entire implementation of our res
 ## Contributors
 | Contributor        | Contact  | 
 | ------------------ | -------- | 
-| [VoNguyenThaiHoc](https://github.com/HocVoNgThai) | [Here!](mailto:vonguyenthaihocilt260@gmail.com) |
-| [VoNhatHoang](https://github.com/VoNhtHoang) | [Here!](mailto:22520481@gm.uit.edu.vn) |
+| [VoNguyenThaiHoc](https://github.com/HocVoNgThai) | [vonguyenthaihocilt260@gmail.com](mailto:vonguyenthaihocilt260@gmail.com) |
+| [VoNhatHoang](https://github.com/VoNhtHoang) | [22520481@gm.uit.edu.vn](mailto:22520481@gm.uit.edu.vn) |
