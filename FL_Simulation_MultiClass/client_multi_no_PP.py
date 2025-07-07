@@ -1,4 +1,3 @@
-# client_multi.py
 import copy
 import sys
 import os
@@ -12,7 +11,7 @@ import gc
 import numpy as np
 import tensorflow as tf
 import pandas as pd
-import tenseal as ts # Đảm bảo đã import
+import tenseal as ts
 
 # TensorFlow và Keras
 from tensorflow import keras
@@ -22,6 +21,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras import layers, models, optimizers
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization
 from tensorflow.keras import regularizers, callbacks
+
+# Giả lập module dp_mechanisms (thay bằng module thực tế của bạn)
 from dp_mechanisms import laplace
 
 LATENCY_DICT = {}
@@ -36,26 +37,18 @@ class Message:
         return f"Message from {self.sender} to {self.recipient}.\n Body is : {self.body} \n \n"
 
 class Client:
-    # <<< CHỈNH SỬA: Thêm he_context vào __init__ >>>
-    def __init__(self, client_name, data_train, data_val, data_test, steps_per_epoch, val_steps, test_steps, active_clients_list, he_context):
+    def __init__(self, client_name, data_train, data_val, data_test, steps_per_epoch, val_steps, test_steps, active_clients_list):
         self.client_name = client_name
         self.active_clients_list = active_clients_list
         self.data_train = data_train
         self.data_test = data_test
         self.data_val = data_val
         self.agent_dict = {}
-        self.temp_dir1 = os.path.join("multiclass_FL_log", datetime.now().strftime("Month%m-Day%d-%Hh-%Mp"))
+        self.temp_dir1 = os.path.join("multiclass_FL_log_no_PP", datetime.now().strftime("Month%m-Day%d-%Hh-%Mp"))
         os.makedirs(self.temp_dir1, exist_ok=True)
         self.temp_dir = os.path.join(self.temp_dir1, f"{client_name}_log")
         os.makedirs(self.temp_dir, exist_ok=True)
         self.batch_size = 512
-
-        # HE Parameters
-        self.he_context = he_context
-        # Client giữ khóa bí mật để giải mã
-        self.he_secret_key = he_context.secret_key()
-        self.param_shapes = {} # Lưu hình dạng của các layer
-        self.param_sizes = {} # Lưu kích thước của các layer
 
         # Global
         self.global_weights = {}
@@ -146,76 +139,6 @@ class Client:
         model.compile(optimizer=adam_optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
 
-    def add_gamma_noise(self, local_weights, local_biases, iteration):
-        weights_dp_noise = []
-        biases_dp_noise = []
-        sensitivity = 2 / (len(self.active_clients_list) * self.steps_per_epoch * self.alpha)
-
-        for weight_layer in local_weights:
-            noise_layer = np.zeros_like(weight_layer, dtype=np.float16)  # Sử dụng float16
-            for idx, weight in np.ndenumerate(weight_layer):
-                if abs(weight) > 1e-15:
-                    noise = laplace(mean=self.mean, sensitivity=sensitivity, epsilon=self.epsilon)
-                    noise_layer[idx] = noise
-            weights_dp_noise.append(noise_layer)
-
-        for bias_layer in local_biases:
-            noise_layer = np.zeros_like(bias_layer, dtype=np.float16)
-            for idx, bias in np.ndenumerate(bias_layer):
-                if abs(bias) > 1e-15:
-                    noise = laplace(mean=self.mean, sensitivity=sensitivity, epsilon=self.epsilon)
-                    noise_layer[idx] = noise
-            biases_dp_noise.append(noise_layer)
-
-        self.local_weights_noise[iteration] = weights_dp_noise
-        self.local_biases_noise[iteration] = biases_dp_noise
-
-        weights_with_noise = [w + n for w, n in zip(local_weights, weights_dp_noise)]
-        biases_with_noise = [b + n for b, n in zip(local_biases, biases_dp_noise)]
-        return weights_with_noise, biases_with_noise
-
-    # <<< THÊM VÀO: Các hàm tiện ích cho HE >>>
-    def _flatten_and_encrypt_chunks(self, params_list):
-        """Làm phẳng, chia chunks, và mã hóa danh sách các tham số."""
-        flat_params = []
-        shapes = []
-        sizes = []
-        for params in params_list:
-            shapes.append(params.shape)
-            size = params.size
-            sizes.append(size)
-            flat_params.extend(params.flatten().tolist())
-        
-        chunk_size = 16384 // 2
-        
-        # Chia vector lớn thành các chunks nhỏ
-        param_chunks = [
-            flat_params[i : i + chunk_size] 
-            for i in range(0, len(flat_params), chunk_size)
-        ]
-        
-        # Mã hóa từng chunk
-        encrypted_chunks = [ts.ckks_vector(self.he_context, chunk) for chunk in param_chunks]
-        
-        return encrypted_chunks, shapes, sizes
-
-    def _decrypt_and_reconstruct_chunks(self, encrypted_chunks, shapes, sizes):
-        """Giải mã từng chunk, ghép lại và tái tạo cấu trúc tham số."""
-        decrypted_flat = []
-        # Giải mã từng chunk và ghép lại
-        for chunk in encrypted_chunks:
-            decrypted_flat.extend(chunk.decrypt(self.he_secret_key))
-        
-        reconstructed_params = []
-        current_pos = 0
-        for shape, size in zip(shapes, sizes):
-            param_slice = decrypted_flat[current_pos : current_pos + size]
-            reconstructed_params.append(np.array(param_slice, dtype=np.float32).reshape(shape))
-            current_pos += size
-        return reconstructed_params
-    # <<< KẾT THÚC THÊM VÀO >>>
-
-
     def model_fit(self, iteration):
         file_path = os.path.join(self.temp_dir, f"Iteration_{iteration}.csv")
         file_path_model = os.path.join(self.temp_dir, f"model_{iteration}.keras")
@@ -242,9 +165,8 @@ class Client:
         biases = []
         for layer in self.model.layers:
             if layer.name.startswith('conv1d') or layer.name.startswith('dense'):
-                w, b = layer.get_weights()
-                weights.append(w)
-                biases.append(b)
+                weights.append(layer.get_weights()[0])
+                biases.append(layer.get_weights()[1])
         return weights, biases
 
     def proc_weights(self, message):
@@ -260,75 +182,30 @@ class Client:
             del self.local_weights[iteration-1]
             del self.local_biases[iteration-1]
 
-        if lock:
-            lock.acquire()
-        weights_dp, biases_dp = self.add_gamma_noise(weights, biases, iteration)
-        if lock:
-            lock.release()
 
-        # <<< CHỈNH SỬA: Mã hóa weights và biases >>>
-        print(f"[{self.client_name}] Bắt đầu mã hóa tham số theo chunks...")
-        encrypted_weights_chunks, w_shapes, w_sizes = self._flatten_and_encrypt_chunks(weights_dp)
-        encrypted_biases_chunks, b_shapes, b_sizes = self._flatten_and_encrypt_chunks(biases_dp)
-        
-        self.param_shapes[iteration] = {'weights': w_shapes, 'biases': b_shapes}
-        self.param_sizes[iteration] = {'weights': w_sizes, 'biases': b_sizes}
-        print(f"[{self.client_name}] Mã hóa {len(encrypted_weights_chunks)} weight chunks và {len(encrypted_biases_chunks)} bias chunks hoàn tất.")
-
-        # Serialize mỗi chunk trong list để gửi đi
-        serialized_w_chunks = [chunk.serialize() for chunk in encrypted_weights_chunks]
-        serialized_b_chunks = [chunk.serialize() for chunk in encrypted_biases_chunks]
-        
         end_time = datetime.now()
         compute_time = end_time - start_time
         self.compute_times[iteration] = compute_time
 
         simulated_time += compute_time + LATENCY_DICT[self.client_name]['server_0']
-        
         body = {
-            'encrypted_weights_chunks': serialized_w_chunks, # Gửi list các chunks
-            'encrypted_biases_chunks': serialized_b_chunks,
+            'weights': weights,
+            'biases': biases,
             'iter': iteration,
             'compute_time': compute_time,
             'simulated_time': simulated_time
         }
-        # <<< KẾT THÚC CHỈNH SỬA >>>
 
         print(f"{self.client_name} End Produce Weights")
-        # Sử dụng agent_dict['server']['server_0'].server_name để đảm bảo đúng tên
-        recipient_server_name = list(self.agent_dict['server'].keys())[0]
-        msg = Message(sender_name=self.client_name, recipient_name=recipient_server_name, body=body)
+        msg = Message(sender_name=self.client_name, recipient_name=self.agent_dict['server']['server_0'], body=body)
         return msg
 
     def recv_weights(self, message):
         body = message.body
         iteration, simulated_time = body['iteration'], body['simulated_time']
 
-        # <<< CHỈNH SỬA: Nhận và giải mã global model >>>
-        print(f"[{self.client_name}] Nhận global model, bắt đầu giải mã các chunks...")
-        
-        # Load từng chunk từ dữ liệu đã serialize
-        encrypted_global_weights_chunks = [
-            ts.CKKSVector.load(self.he_context, chunk) for chunk in body['encrypted_global_weights_chunks']
-        ]
-        encrypted_global_biases_chunks = [
-            ts.CKKSVector.load(self.he_context, chunk) for chunk in body['encrypted_global_biases_chunks']
-        ]
-
-        w_shapes = self.param_shapes[iteration]['weights']
-        b_shapes = self.param_shapes[iteration]['biases']
-        w_sizes = self.param_sizes[iteration]['weights']
-        b_sizes = self.param_sizes[iteration]['biases']
-
-        # Sử dụng hàm giải mã chunking mới
-        return_weights_encrypted = self._decrypt_and_reconstruct_chunks(encrypted_global_weights_chunks, w_shapes, w_sizes)
-        return_biases_encrypted = self._decrypt_and_reconstruct_chunks(encrypted_global_biases_chunks, b_shapes, b_sizes)
-        print(f"[{self.client_name}] Giải mã và tái tạo từ chunks hoàn tất.")
-
-        # Loại bỏ nhiễu DP khỏi global model đã được giải mã
-        return_weights = [w - n for w, n in zip(return_weights_encrypted, self.local_weights_noise[iteration])]
-        return_biases = [b - n for b, n in zip(return_biases_encrypted, self.local_biases_noise[iteration])]
-        # <<< KẾT THÚC CHỈNH SỬA >>>
+        return_weights = body['weights']
+        return_biases = body['biases']
 
         self.global_weights[iteration], self.global_biases[iteration] = return_weights, return_biases
         self.save_global_model(iteration)
@@ -338,11 +215,7 @@ class Client:
             del self.global_biases[iteration-1]
             del self.local_weights_noise[iteration-1]
             del self.local_biases_noise[iteration-1]
-            del self.param_shapes[iteration-1] # Xóa shape cũ
-            del self.param_sizes[iteration-1] # Xóa size cũ
 
-        # ... (Phần còn lại của hàm `recv_weights` giữ nguyên, vì nó hoạt động trên dữ liệu đã giải mã) ...
-        # ... (đánh giá, lưu log, kiểm tra hội tụ) ...
         self.local_accuracy[iteration], self.local_loss[iteration] = self.evaluate_accuracy(self.local_weights[iteration], self.local_biases[iteration])
         self.global_accuracy[iteration], self.global_loss[iteration] = self.evaluate_accuracy(self.global_weights[iteration], self.global_biases[iteration])
         if iteration > 2:
@@ -360,9 +233,9 @@ class Client:
         pd.DataFrame([history1]).to_csv(file_his_global, index=False, header=not os.path.exists(file_his_global), mode='a')
         pd.DataFrame([history2]).to_csv(file_his_local, index=False, header=not os.path.exists(file_his_local), mode='a')
         pd.DataFrame([history3]).to_csv(file_simulated_time, index=False, header=not os.path.exists(file_simulated_time), mode='a')
-        
+
         converged = self.check_convergence(iteration)
-        
+
         args = [self.client_name, iteration, self.local_accuracy[iteration], self.local_loss[iteration],
                 self.global_accuracy[iteration], self.global_loss[iteration], self.compute_times[iteration], simulated_time]
         iteration_report = 'Performance Metrics for {} on iteration {} \n' \
@@ -376,9 +249,8 @@ class Client:
 
         print("Arguments: ", iteration_report.format(*args))
         del self.compute_times[iteration]
-        recipient_server_name = list(self.agent_dict['server'].keys())[0]
-        msg = Message(sender_name=self.client_name, recipient_name=recipient_server_name,
-                      body={'converged': converged, 'simulated_time': simulated_time + LATENCY_DICT[self.client_name][recipient_server_name]})
+        msg = Message(sender_name=self.client_name, recipient_name='server_0',
+                      body={'converged': converged, 'simulated_time': simulated_time + LATENCY_DICT[self.client_name]['server_0']})
         return msg
 
     def evaluate_accuracy(self, weights, biases):
