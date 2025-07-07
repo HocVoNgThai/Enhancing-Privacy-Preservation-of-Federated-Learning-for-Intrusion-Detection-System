@@ -66,14 +66,9 @@ class Client:
         self.convergence = 0
 
         # DP parameters
-        self.alpha = 1.0
-        self.epsilon = 1.0
-        self.mean = 0
         self.steps_per_epoch = steps_per_epoch
         self.validation_steps = val_steps
         self.test_steps = test_steps
-        self.local_weights_noise = {}
-        self.local_biases_noise = {}
 
         for name in active_clients_list:
             if name not in LATENCY_DICT.keys():
@@ -213,8 +208,7 @@ class Client:
         if iteration > 1:
             del self.global_weights[iteration-1]
             del self.global_biases[iteration-1]
-            del self.local_weights_noise[iteration-1]
-            del self.local_biases_noise[iteration-1]
+
 
         self.local_accuracy[iteration], self.local_loss[iteration] = self.evaluate_accuracy(self.local_weights[iteration], self.local_biases[iteration])
         self.global_accuracy[iteration], self.global_loss[iteration] = self.evaluate_accuracy(self.global_weights[iteration], self.global_biases[iteration])
