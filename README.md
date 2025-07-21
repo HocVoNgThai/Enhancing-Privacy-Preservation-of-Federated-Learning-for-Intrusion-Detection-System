@@ -34,4 +34,4 @@ Finally, these folders are used for storage logs and trained models from trainin
 
 - [Centralize_Log](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/Centralize_Log) folder contains logs of centralized training process.
 
-- [FL_log](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_log) folder contains logs, local and global models of any clients after FL training process with multi-label dataset.
+- [FL_Log](https://github.com/HocVoNgThai/Enhancing-Privacy-Preservation-of-Federated-Learning-for-Intrusion-Detection-System/tree/main/FL_Log) folder contains logs, local and global models of any clients after FL training process with multi-label dataset.
